@@ -71,16 +71,26 @@ service cloud.firestore {
           isAdmin(request.auth.uid) || 
           existing().customerId == request.auth.uid || 
           existing().technicianId == request.auth.uid
-        ) && 
-        isValidBooking(incoming()) && (
-          // Action: Customer cancel
-          (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) && incoming().status == 'cancelled') ||
-          // Action: Tech location update
-          (existing().technicianId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['techLocation', 'updatedAt'])) ||
-          // Action: Tech status update
-          (existing().technicianId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusHistory', 'updatedAt', 'techLocationShareEnabled'])) ||
+        ) && (
           // Admin full update
-          isAdmin(request.auth.uid)
+          isAdmin(request.auth.uid) ||
+
+          // Action: Customer cancel
+          (existing().customerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+            incoming().status == 'cancelled') ||
+
+          // Action: Tech location update
+          (existing().technicianId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['techLocation', 'updatedAt'])) ||
+
+          // Action: Tech status update (tech can toggle status + statusHistory + updatedAt)
+          (existing().technicianId == request.auth.uid &&
+            (
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusHistory', 'updatedAt', 'techLocationShareEnabled']) ||
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusHistory', 'updatedAt'])
+            )
+          )
         )
       );
 
