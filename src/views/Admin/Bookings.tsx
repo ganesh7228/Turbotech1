@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { Booking } from '../../types';
-import { Briefcase, MapPin, User, ChevronRight, Phone, AlertCircle } from 'lucide-react';
-
-import { arrayUnion } from 'firebase/firestore';
+import { Briefcase, MapPin, User, ChevronRight, Phone, Gift } from 'lucide-react';
 
 export default function AdminBookings() {
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -18,19 +17,32 @@ export default function AdminBookings() {
     });
   }, []);
 
-  const updateStatus = async (id: string, status: Booking['status']) => {
+  const updateStatus = async (id: string, status?: Booking['status'], extra?: Record<string, any>) => {
     try {
-      await updateDoc(doc(db, 'bookings', id), {
-        status,
-        statusHistory: arrayUnion({
-          status,
-          timestamp: new Date().toISOString()
-        }),
-        updatedAt: serverTimestamp()
-      });
-    } catch (e) {
-      console.error(e);
+      const payload = {
+        updatedAt: new Date().toISOString(),
+        ...(status ? { status } : {}),
+        ...extra,
+      };
+
+      await axios.patch(
+        `${import.meta.env.VITE_API_URL}/api/bookings/${id}`,
+        payload,
+        { withCredentials: true }
+      );
+    } catch (e: any) {
+      console.error('[AdminBookings] updateStatus failed:', e.response?.data || e.message || e);
     }
+  };
+
+  const handleRejectGift = async (booking: Booking) => {
+    const reason = window.prompt('Please enter the reason for rejecting this reward:');
+    if (!reason?.trim()) return;
+    await updateStatus(booking.id, undefined, {
+      rewardStatus: 'rejected',
+      rewardRejectedReason: reason.trim(),
+      rewardRejectedAt: new Date().toISOString(),
+    });
   };
 
   const getStatusAction = (status: Booking['status']) => {
@@ -65,7 +77,14 @@ export default function AdminBookings() {
             </div>
 
             <div className="mb-4">
-              <h3 className="font-bold text-gray-900">{booking.problem}</h3>
+              <div className="flex items-center gap-2 mb-3">
+                <h3 className="font-bold text-gray-900">{booking.problem}</h3>
+                {booking.appliedOffer && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest bg-amber-50 text-amber-700">
+                    <Gift size={12} /> Gift applied
+                  </span>
+                )}
+              </div>
               <div className="mt-2 space-y-1">
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   <User size={12} /> {booking.customerName}
@@ -76,6 +95,11 @@ export default function AdminBookings() {
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   <MapPin size={12} /> {booking.address}
                 </div>
+                {booking.rewardStatus === 'rejected' && (
+                  <div className="mt-2 rounded-2xl bg-rose-50 border border-rose-100 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-rose-700">
+                    Reward rejected{booking.rewardRejectedReason ? `: ${booking.rewardRejectedReason}` : ''}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -92,6 +116,14 @@ export default function AdminBookings() {
                 >
                   Reject
                 </button>
+                {booking.appliedOffer && booking.rewardStatus !== 'rejected' && (
+                  <button
+                    onClick={() => handleRejectGift(booking)}
+                    className="px-3 py-2 bg-amber-50 text-amber-700 rounded-xl text-[10px] font-bold uppercase hover:bg-amber-100"
+                  >
+                    Reject Gift
+                  </button>
+                )}
                 {getStatusAction(booking.status) && (
                   <button 
                     onClick={() => updateStatus(booking.id, getStatusAction(booking.status)!)}

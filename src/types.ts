@@ -23,9 +23,15 @@ export type BookingStatus =
   | 'completed' 
   | 'rejected' 
   | 'cancelled';
+export type RewardStatus = 'pending' | 'approved' | 'rejected';
 export type BookingType = 'normal' | 'quick';
 
 export interface Booking {
+  appliedOffer?: string | null;
+  isFirstOrder?: boolean;
+  rewardStatus?: RewardStatus;
+  rewardRejectedReason?: string;
+  rewardRejectedAt?: string;
   id: string;
   customerId: string;
   customerName: string;

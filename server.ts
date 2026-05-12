@@ -128,7 +128,7 @@ if (process.env.ALLOWED_ORIGINS) {
 }
 
 app.use(cors({
-  origin: function (origin, callback) {
+  origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -500,10 +500,19 @@ app.patch("/api/bookings/:id", async (req, res) => {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    await docRef.update({
+    const updatePayload: any = {
       ...req.body,
       updatedAt: new Date().toISOString()
-    });
+    };
+
+    if (req.body.status) {
+      updatePayload.statusHistory = admin.firestore.FieldValue.arrayUnion({
+        status: req.body.status,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    await docRef.update(updatePayload);
 
     res.json({ success: true });
   } catch (error) {
