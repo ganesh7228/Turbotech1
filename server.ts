@@ -112,7 +112,7 @@ const app = express();
 
 // CORS configuration - Allow requests from frontend domains
 const allowedOrigins = [
-  'https://turbotechI.vercel.app',
+  'https://turbotech1.vercel.app', // Your actual Vercel domain
   'https://turbo-tech-six.vercel.app',
   'http://localhost:5173', // Vite dev server
   'http://localhost:3000',  // Alt dev
