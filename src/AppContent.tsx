@@ -139,7 +139,7 @@ function NavButton({ icon, label, active, onClick }: { icon: React.ReactNode, la
       className={`flex flex-col items-center justify-center flex-1 h-full gap-0.5 transition-all ${active ? 'text-[#2F70E9]' : 'text-gray-400 hover:text-gray-500'}`}
     >
       <div className="mb-0.5">
-        {React.cloneElement(icon as React.ReactElement, { className: active ? 'stroke-[2.5px]' : 'stroke-[2px]' })}
+        {React.cloneElement(icon as React.ReactElement<any>, { className: active ? 'stroke-[2.5px]' : 'stroke-[2px]' })}
       </div>
       <span className={`text-[9px] font-black uppercase tracking-wider leading-none ${active ? 'opacity-100' : 'opacity-60'}`}>{label}</span>
     </button>

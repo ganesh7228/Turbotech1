@@ -140,7 +140,7 @@ export default function Home() {
               >
                 <div className="flex items-center gap-3 flex-1 overflow-hidden">
                   <div className="w-12 h-12 bg-[#F8F9FB] rounded-xl flex items-center justify-center border border-gray-50 text-[#2F70E9] shrink-0 group-hover:rotate-6 transition-transform">
-                    {React.cloneElement(service.icon as React.ReactElement, { size: 20, strokeWidth: 2.5 })}
+                    {React.cloneElement(service.icon as React.ReactElement<any>, { size: 20, strokeWidth: 2.5 })}
                   </div>
                   <div className="flex-1 min-w-0 pr-2">
                     <h4 className="text-sm font-black text-gray-900 font-display truncate leading-tight">{service.title}</h4>
