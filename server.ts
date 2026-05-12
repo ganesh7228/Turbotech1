@@ -10,6 +10,7 @@ import { getAuth } from "firebase-admin/auth";
 import jwt from "jsonwebtoken";
 import admin from "firebase-admin";
 import cookieParser from "cookie-parser";
+import cors from "cors";
 import fs from 'fs';
 
 dotenv.config();
@@ -108,6 +109,39 @@ const authAdmin = getAuth(adminApp);
 const JWT_SECRET = process.env.JWT_SECRET || "nanjangud-service-pro-secret-123";
 
 const app = express();
+
+// CORS configuration - Allow requests from frontend domains
+const allowedOrigins = [
+  'https://turbotechI.vercel.app',
+  'https://turbo-tech-six.vercel.app',
+  'http://localhost:5173', // Vite dev server
+  'http://localhost:3000',  // Alt dev
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000'
+];
+
+// Add any additional origins from environment variable
+if (process.env.ALLOWED_ORIGINS) {
+  const envOrigins = process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim());
+  allowedOrigins.push(...envOrigins);
+  console.log('[CORS] Added origins from env:', envOrigins);
+}
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`[CORS] Rejected origin: ${origin}`);
+      callback(new Error('CORS policy violation'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 86400 // 24 hours
+}));
+
 app.use(express.json());
 app.use(cookieParser());
 
