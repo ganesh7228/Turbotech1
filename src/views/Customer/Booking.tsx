@@ -218,11 +218,13 @@ export default function BookingView() {
     } catch (err: any) {
       console.warn("Direct Firestore write failed, trying API fallback:", err);
       try {
-        const { data } = await axios.post('/api/bookings', bookingData);
+        console.log('[Booking] Using API fallback to create booking...');
+        const { data } = await axios.post(`${import.meta.env.VITE_API_URL}/api/bookings`, bookingData);
+        console.log('[Booking] Booking created successfully:', data.id);
         navigate(`/success/${data.id}`);
       } catch (apiErr: any) {
         console.error("Booking failed via both direct and API:", apiErr);
-        const errorMsg = apiErr.response?.data?.details || apiErr.response?.data?.error || 'Booking failed. Please try again.';
+        const errorMsg = apiErr.response?.data?.details || apiErr.response?.data?.error || apiErr.message || 'Booking failed. Please try again.';
         throw new Error(errorMsg);
       }
     }
@@ -233,7 +235,9 @@ export default function BookingView() {
     setOtpLoading(true);
     setError('');
     try {
+      console.log('[Booking] Verifying OTP...');
       const { user: newUser, isNewUser } = await login(form.phone, otp);
+      console.log('[Booking] OTP verified, user:', newUser.id);
       
       // Update name if new user
       if (isNewUser && form.name) {
@@ -258,8 +262,9 @@ export default function BookingView() {
 
       await processBooking(newUser.id, isFirst);
     } catch (err: any) {
-      console.error("Verification failed:", err);
-      setError(err.response?.data?.error || 'Verification failed. Please check the code.');
+      console.error("[Booking] Verification failed:", err);
+      const apiError = err.response?.data?.error || err.message || 'Verification failed. Please check the code.';
+      setError(apiError);
       setOtpLoading(false);
       // Keep modal open so user can retry
       setOtp(''); // Clear OTP field for a fresh start
@@ -283,10 +288,13 @@ export default function BookingView() {
       setLoading(true);
       setError('');
       try {
-        await axios.post('/api/send-otp', { phone: form.phone });
+        console.log('[Booking] Sending OTP to:', form.phone);
+        await axios.post(`${import.meta.env.VITE_API_URL}/api/send-otp`, { phone: form.phone });
         setShowOtpModal(true);
       } catch (err: any) {
-        setError(err.response?.data?.error || 'Failed to send OTP');
+        console.error('[Booking] Send OTP failed:', err);
+        const apiError = err.response?.data?.error || err.message || 'Failed to send OTP';
+        setError(apiError);
       } finally {
         setLoading(false);
       }
