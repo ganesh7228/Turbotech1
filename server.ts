@@ -9,7 +9,7 @@ import { getFirestore, Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import jwt from "jsonwebtoken";
 import admin from "firebase-admin";
-import serviceAccount from "./serviceAccountKey.json";
+const serviceAccount = JSON.parse(process.env.FIREBASE_KEY as string);
 import cookieParser from "cookie-parser";
 import fs from 'fs';
 
