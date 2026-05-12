@@ -112,10 +112,11 @@ const app = express();
 
 // CORS configuration - Allow requests from frontend domains
 const allowedOrigins = [
-  'https://turbotech1.vercel.app', // Your actual Vercel domain
+  'https://turbotech1.vercel.app',
+  'https://turbotech.vercel.app',
   'https://turbo-tech-six.vercel.app',
-  'http://localhost:5173', // Vite dev server
-  'http://localhost:3000',  // Alt dev
+  'http://localhost:5173',
+  'http://localhost:3000',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:3000'
 ];
@@ -127,7 +128,7 @@ if (process.env.ALLOWED_ORIGINS) {
   console.log('[CORS] Added origins from env:', envOrigins);
 }
 
-app.use(cors({
+const corsOptions = {
   origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
@@ -138,24 +139,25 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
   maxAge: 86400 // 24 hours
-}));
+};
 
-// Explicitly handle preflight requests for all routes
-app.options('*', cors({
-  origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('CORS policy violation'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  maxAge: 86400
-}));
+app.use(cors(corsOptions));
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 app.use(express.json());
 app.use(cookieParser());
