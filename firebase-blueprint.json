@@ -1,0 +1,73 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information.",
+      "type": "object",
+      "properties": {
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["customer", "admin", "technician"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["phone", "role"]
+    },
+    "OTP": {
+      "title": "OTP",
+      "description": "One-time passwords for authentication.",
+      "type": "object",
+      "properties": {
+        "phone": { "type": "string" },
+        "code": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["phone", "code", "expiresAt"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Service booking details.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "problem": { "type": "string" },
+        "date": { "type": "string" },
+        "timeSlot": { "type": "string" },
+        "type": { "type": "string", "enum": ["normal", "quick"] },
+        "status": { "type": "string", "enum": ["pending", "callback", "approved", "on_the_way", "completed", "rejected"] },
+        "technicianId": { "type": "string" },
+        "location": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerId", "customerName", "phone", "address", "problem", "type", "status", "createdAt"]
+    },
+    "Reward": {
+      "title": "Reward",
+      "description": "Rewards available for customers.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "description"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": "User", "description": "Customer profiles." },
+    "/otps/{phone}": { "schema": "OTP", "description": "Internal OTP storage." },
+    "/bookings/{bookingId}": { "schema": "Booking", "description": "Service requests." },
+    "/rewards/{rewardId}": { "schema": "Reward", "description": "Promotional rewards." },
+    "/admins/{userId}": { "schema": { "type": "object" }, "description": "Admin access list." }
+  }
+}

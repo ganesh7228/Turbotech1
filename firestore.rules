@@ -1,0 +1,104 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin(uid) {
+      return exists(/databases/$(database)/documents/admins/$(uid));
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isValidBooking(data) {
+      return data.customerName is string && data.customerName.size() <= 100 &&
+             data.phone is string && data.phone.size() >= 10 && data.phone.size() <= 20 &&
+             data.address is string && data.address.size() <= 1000 &&
+             data.problem is string && data.problem.size() <= 2000 &&
+             data.status in ['pending', 'pending_callback', 'callback', 'approved', 'dispatched', 'on_the_way', 'arriving', 'arrived', 'process_started', 'repair_started', 'repair_completed', 'payment_received', 'completed', 'rejected', 'cancelled'] &&
+             data.location.lat is number && data.location.lng is number &&
+             data.createdAt is string && data.updatedAt is string;
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || (isSignedIn() && isAdmin(request.auth.uid));
+      allow create: if isOwner(userId) && (
+        incoming().keys().hasAll(['phone', 'role', 'createdAt']) &&
+        incoming().role == 'customer' &&
+        incoming().phone is string
+      );
+      allow update: if isOwner(userId) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt']) ||
+        (isSignedIn() && isAdmin(request.auth.uid))
+      );
+    }
+
+    match /admins/{userId} {
+      allow read: if isSignedIn();
+      allow write: if false; // Only via console or Admin SDK
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isSignedIn() && (
+        resource.data.customerId == request.auth.uid || 
+        (request.auth.token.phone != null && resource.data.phone == request.auth.token.phone) ||
+        isAdmin(request.auth.uid) || 
+        resource.data.technicianId == request.auth.uid
+      );
+
+      allow create: if isSignedIn() && 
+                    incoming().customerId == request.auth.uid &&
+                    isValidBooking(incoming());
+
+      allow update: if isSignedIn() && (
+        (
+          isAdmin(request.auth.uid) || 
+          existing().customerId == request.auth.uid || 
+          existing().technicianId == request.auth.uid
+        ) && 
+        isValidBooking(incoming()) && (
+          // Action: Customer cancel
+          (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) && incoming().status == 'cancelled') ||
+          // Action: Tech location update
+          (existing().technicianId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['techLocation', 'updatedAt'])) ||
+          // Action: Tech status update
+          (existing().technicianId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusHistory', 'updatedAt', 'techLocationShareEnabled'])) ||
+          // Admin full update
+          isAdmin(request.auth.uid)
+        )
+      );
+
+      allow delete: if isSignedIn() && isAdmin(request.auth.uid);
+    }
+
+    match /rewards/{rewardId} {
+      allow read: if true;
+      allow write: if isSignedIn() && isAdmin(request.auth.uid);
+    }
+
+    match /otps/{phone} {
+      allow read, write: if false; // Only backend (Admin SDK)
+    }
+
+
+    match /test/{docId} {
+      allow read, write: if false; // System testing only via Admin SDK
+    }
+  }
+}

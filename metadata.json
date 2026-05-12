@@ -1,0 +1,6 @@
+{
+  "name": "Turbo Tech",
+  "description": "Premium doorstep technical services and computer repairs with real-time tracking.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": []
+}
