@@ -512,7 +512,7 @@ app.patch("/api/bookings/:id", async (req, res) => {
   }
 });
 
-// Vite middleware for development
+// Vite middleware for development only
 if (process.env.NODE_ENV !== "production") {
   const vite = await createViteServer({
     server: { middlewareMode: true },
@@ -520,8 +520,38 @@ if (process.env.NODE_ENV !== "production") {
   });
   app.use(vite.middlewares);
 } else {
+  // Backend-only deployment - no static file serving
   app.get("/", (req, res) => {
-    res.send("Backend is running 🚀");
+    res.json({
+      message: "TurboTech Backend API",
+      status: "running",
+      endpoints: {
+        health: "/api/health",
+        auth: "/api/send-otp, /api/verify-otp, /api/me, /api/logout",
+        bookings: "/api/bookings",
+        profile: "/api/update-profile"
+      }
+    });
+  });
+
+  // Catch-all handler for undefined routes (prevents static file attempts)
+  app.use("*", (req, res) => {
+    res.status(404).json({
+      error: "Not Found",
+      message: "This is a backend API. Frontend is served separately.",
+      availableEndpoints: [
+        "GET /api/health",
+        "POST /api/send-otp",
+        "POST /api/verify-otp",
+        "GET /api/me",
+        "POST /api/logout",
+        "POST /api/update-profile",
+        "GET /api/bookings",
+        "POST /api/bookings",
+        "GET /api/bookings/:id",
+        "PATCH /api/bookings/:id"
+      ]
+    });
   });
 }
 
