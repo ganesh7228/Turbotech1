@@ -9,12 +9,12 @@ import { getFirestore, Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import jwt from "jsonwebtoken";
 import admin from "firebase-admin";
-import serviceAccount from "./serviceAccountKey.json";
 import cookieParser from "cookie-parser";
 import fs from 'fs';
 
 dotenv.config();
 
+const serviceAccount = JSON.parse(process.env.FIREBASE_KEY as string);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
