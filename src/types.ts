@@ -6,12 +6,6 @@ export interface User {
   name?: string;
   role: UserRole;
   createdAt: string;
-
-  // Loyalty points for redeeming rewards
-  points?: number;
-
-  // Reward ids already redeemed by this user
-  redeemedRewardIds?: string[];
 }
 
 export type BookingStatus = 
@@ -29,20 +23,9 @@ export type BookingStatus =
   | 'completed' 
   | 'rejected' 
   | 'cancelled';
-export type RewardStatus = 'pending' | 'approved' | 'rejected';
 export type BookingType = 'normal' | 'quick';
 
 export interface Booking {
-  appliedOffer?: string | null;
-  isFirstOrder?: boolean;
-
-  // Free-gift/reward approval flow (customer claims reward using points)
-  // Admin approves => giftStatus moves through Gift -> Gift dispatched -> Gift out for delivery -> Gift delivered
-  giftStatus?: string;
-
-  rewardStatus?: RewardStatus;
-  rewardRejectedReason?: string;
-  rewardRejectedAt?: string;
   id: string;
   customerId: string;
   customerName: string;
@@ -83,7 +66,4 @@ export interface Reward {
   description: string;
   imageUrl?: string;
   createdAt: string;
-
-  // Points needed to redeem this reward
-  pointsRequired?: number;
 }

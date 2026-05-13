@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import { db } from '../../lib/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { Booking } from '../../types';
-
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   MapPin, 
@@ -44,50 +42,37 @@ export default function TechJobs() {
     });
   }, [user]);
 
-  // Real-time location sharing (send updates via API to avoid Firestore permission issues)
+  // Real-time location sharing
   useEffect(() => {
-    let watchId: number | undefined;
+    let watchId: number;
     if (sharing) {
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
-          axios.patch(
-            `${import.meta.env.VITE_API_URL}/api/bookings/${sharing}`,
-            {
-              techLocation: { lat: pos.coords.latitude, lng: pos.coords.longitude },
-              techLocationShareEnabled: true
-            },
-            { withCredentials: true }
-          );
+          updateDoc(doc(db, 'bookings', sharing), {
+            techLocation: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+            updatedAt: serverTimestamp()
+          });
         },
         (err) => console.error(err),
         { enableHighAccuracy: true }
       );
     }
     return () => {
-      if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
+      if (watchId) navigator.geolocation.clearWatch(watchId);
     };
   }, [sharing]);
 
   const updateStatus = async (id: string, status: Booking['status'], extra: any = {}) => {
-    const currentJob = jobs.find((j) => j.id === id);
-
-    let giftStatusUpdate: string | undefined;
-    if (currentJob?.giftStatus) {
-      if (status === 'dispatched') giftStatusUpdate = 'Gift dispatched';
-      if (status === 'on_the_way') giftStatusUpdate = 'Gift out for delivery';
-      if (status === 'arrived') giftStatusUpdate = 'Gift delivered';
-    }
-
-    await axios.patch(
-      `${import.meta.env.VITE_API_URL}/api/bookings/${id}`,
-      {
+    await updateDoc(doc(db, 'bookings', id), {
+      status,
+      technicianId: user?.id,
+      statusHistory: arrayUnion({
         status,
-        technicianId: user?.id,
-        ...(giftStatusUpdate ? { giftStatus: giftStatusUpdate } : {}),
-        ...extra,
-      },
-      { withCredentials: true }
-    );
+        timestamp: new Date().toISOString()
+      }),
+      updatedAt: serverTimestamp(),
+      ...extra
+    });
   };
 
   const getStatusLabel = (status: Booking['status']) => {
@@ -201,12 +186,8 @@ export default function TechJobs() {
                 <>
                   {!job.techLocationShareEnabled ? (
                     <button 
-                      onClick={async () => {
-                        await axios.patch(
-                          `${import.meta.env.VITE_API_URL}/api/bookings/${job.id}`,
-                          { techLocationShareEnabled: true },
-                          { withCredentials: true }
-                        );
+                      onClick={() => {
+                        updateDoc(doc(db, 'bookings', job.id), { techLocationShareEnabled: true });
                         setSharing(job.id);
                       }}
                       className="w-full bg-red-500 text-white py-5 rounded-[24px] font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-red-100 active:scale-95 transition-all"

@@ -32,14 +32,11 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      console.log('[Login] Sending OTP to:', phone);
-      await axios.post(`${import.meta.env.VITE_API_URL}/api/send-otp`, { phone });
+      await axios.post('/api/send-otp', { phone });
       setStep('otp');
       setTimer(60);
     } catch (err: any) {
-      console.error('[Login] Send OTP failed:', err);
-      const apiError = err.response?.data?.error || err.message || 'Failed to send OTP. Try again.';
-      setError(apiError);
+      setError(err.response?.data?.error || 'Failed to send OTP. Try again.');
     } finally {
       setLoading(false);
     }

@@ -7,7 +7,7 @@ import { Gift, Plus, Trash2, Image as ImageIcon, X } from 'lucide-react';
 export default function AdminRewards() {
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ title: '', description: '', imageUrl: '', pointsRequired: '' });
+  const [form, setForm] = useState({ title: '', description: '', imageUrl: '' });
 
   useEffect(() => {
     const q = query(collection(db, 'rewards'), orderBy('createdAt', 'desc'));
@@ -19,22 +19,12 @@ export default function AdminRewards() {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title || !form.description) return;
-
-    const trimmedImage = form.imageUrl.trim();
-    const parsedPoints = form.pointsRequired.trim().length === 0 ? 0 : Number(form.pointsRequired);
-
-    if (Number.isNaN(parsedPoints) || parsedPoints < 0) return;
-
     try {
       await addDoc(collection(db, 'rewards'), {
-        title: form.title,
-        description: form.description,
-        imageUrl: trimmedImage.length > 0 ? trimmedImage : undefined,
-        pointsRequired: parsedPoints,
-        createdAt: serverTimestamp(),
+        ...form,
+        createdAt: serverTimestamp()
       });
-
-      setForm({ title: '', description: '', imageUrl: '', pointsRequired: '' });
+      setForm({ title: '', description: '', imageUrl: '' });
       setShowAdd(false);
     } catch (e) {
       console.error(e);
@@ -85,17 +75,6 @@ export default function AdminRewards() {
                 onChange={e => setForm({...form, description: e.target.value})}
                 className="w-full px-4 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-
-              <input
-                type="number"
-                min={0}
-                step={1}
-                placeholder="Points Required"
-                value={form.pointsRequired}
-                onChange={e => setForm({...form, pointsRequired: e.target.value})}
-                className="w-full px-4 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-
               <input
                 type="text"
                 placeholder="Image URL (optional)"
@@ -103,7 +82,6 @@ export default function AdminRewards() {
                 onChange={e => setForm({...form, imageUrl: e.target.value})}
                 className="w-full px-4 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-
               <button type="submit" className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold">
                 Create Reward
               </button>
@@ -125,11 +103,6 @@ export default function AdminRewards() {
             <div className="flex-1 min-w-0">
                <h3 className="font-bold text-gray-900 truncate">{reward.title}</h3>
                <p className="text-xs text-gray-500 line-clamp-1">{reward.description}</p>
-
-               <div className="mt-2 inline-flex items-center gap-2 px-2 py-0.5 rounded-xl bg-amber-50 border border-amber-100">
-                 <span className="text-[10px] font-bold text-amber-800">Requires</span>
-                 <span className="text-[10px] font-black text-amber-900">{reward.pointsRequired ?? 0} PTS</span>
-               </div>
             </div>
             <button 
               onClick={() => handleDelete(reward.id)}

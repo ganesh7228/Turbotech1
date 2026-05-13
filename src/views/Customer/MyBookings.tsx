@@ -1,6 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
+import { 
+  collection, 
+  query, 
+  where, 
+  orderBy, 
+  onSnapshot,
+  doc,
+  updateDoc
+} from 'firebase/firestore';
+import { db, auth } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Booking } from '../../types';
 import axios from 'axios';
@@ -18,8 +28,7 @@ import {
   Smartphone,
   ChevronRight,
   Bike,
-  ChevronDown,
-  Gift
+  ChevronDown
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker } from 'react-leaflet';
 import L from 'leaflet';
@@ -73,64 +82,81 @@ export default function MyBookings() {
 
   useEffect(() => {
     if (!user?.phone) {
-      setLoading(false);
-      return;
+        setLoading(false);
+        return;
     }
 
-    const fetchBookings = async () => {
+    let unsubscribe: () => void = () => {};
+
+    const startListener = () => {
+      const q = query(
+        collection(db, 'bookings'),
+        where('phone', '==', user.phone),
+        orderBy('createdAt', 'desc')
+      );
+
+      unsubscribe = onSnapshot(q, (snapshot) => {
+        const updatedBookings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Booking));
+        setBookings(updatedBookings);
+        
+        if (selectedBooking) {
+          const updated = updatedBookings.find(b => b.id === selectedBooking.id);
+          if (updated) setSelectedBooking(updated);
+        }
+        
+        setLoading(false);
+      }, (error) => {
+        console.warn("Real-time bookings failed (likely auth), trying API fallback:", error.message);
+        fetchViaApi();
+      });
+    };
+
+    const fetchViaApi = async () => {
       try {
-        const { data } = await axios.get(`${import.meta.env.VITE_API_URL}/api/bookings`, { withCredentials: true });
+        const { data } = await axios.get('/api/bookings');
         setBookings(data);
         if (selectedBooking) {
-          const updated = data.find((b: Booking) => b.id === selectedBooking.id);
+          const updated = data.find((b: any) => b.id === selectedBooking.id);
           if (updated) setSelectedBooking(updated);
         }
       } catch (apiErr) {
-        console.error("[MyBookings] Booking fetch failed:", apiErr);
+        console.error("Booking fetch failed via both methods:", apiErr);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchBookings();
+    // Only start listener if Firebase Auth is ready and user is authenticated on frontend
+    if (auth.currentUser) {
+      startListener();
+    } else {
+      console.log("[MyBookings] Firebase Auth not ready on frontend, using API directly");
+      fetchViaApi();
+    }
+
+    return () => unsubscribe();
   }, [user, selectedBooking?.id]);
 
-  const handleReschedule = async (id: string) => {
-    const newDate = window.prompt('Enter the new service date (YYYY-MM-DD):');
-    if (!newDate) return;
-
-    const newTimeSlot = window.prompt('Enter the new time slot (example: 10:00 AM - 12:00 PM):');
-    if (!newTimeSlot) return;
-
-    try {
-      await axios.patch(
-        `${import.meta.env.VITE_API_URL}/api/bookings/${id}`,
-        { date: newDate, timeSlot: newTimeSlot, updatedAt: new Date().toISOString() },
-        { withCredentials: true }
-      );
-      const { data } = await axios.get(`${import.meta.env.VITE_API_URL}/api/bookings`, { withCredentials: true });
-      setBookings(data);
-      const updated = data.find((b: Booking) => b.id === id) || null;
-      setSelectedBooking(updated);
-    } catch (apiErr) {
-      console.error('[MyBookings] reschedule failed:', apiErr);
-    }
-  };
-
   const handleCancel = async (id: string) => {
-    if (!window.confirm('Are you sure you want to cancel this booking?')) return;
-
-    try {
-      await axios.patch(
-        `${import.meta.env.VITE_API_URL}/api/bookings/${id}`,
-        { status: 'cancelled' },
-        { withCredentials: true }
-      );
-      setSelectedBooking(null);
-      const { data } = await axios.get(`${import.meta.env.VITE_API_URL}/api/bookings`, { withCredentials: true });
-      setBookings(data);
-    } catch (apiErr) {
-      console.error("[MyBookings] cancel failed:", apiErr);
+    if (window.confirm('Are you sure you want to cancel this booking?')) {
+      try {
+        await updateDoc(doc(db, 'bookings', id), {
+          status: 'cancelled',
+          updatedAt: new Date().toISOString()
+        });
+        setSelectedBooking(null);
+      } catch (e) {
+        console.warn("Direct cancel failed, trying API fallback:", e);
+        try {
+           await axios.patch(`/api/bookings/${id}`, { status: 'cancelled' });
+           setSelectedBooking(null);
+           // Refresh list
+           const { data } = await axios.get('/api/bookings');
+           setBookings(data);
+        } catch (apiErr) {
+           console.error("Failed to cancel via both methods:", apiErr);
+        }
+      }
     }
   };
 
@@ -154,23 +180,17 @@ export default function MyBookings() {
     }
   };
 
-  const GIFT_STATUS_STEPS = ['Gift', 'Gift dispatched', 'Gift out for delivery', 'Gift delivered'] as const;
-
-  const isGiftBooking = !!selectedBooking?.giftStatus;
-
-  const STATUS_STEPS: Booking['status'][] | (typeof GIFT_STATUS_STEPS)[number][] = isGiftBooking
-    ? (GIFT_STATUS_STEPS as unknown as (typeof GIFT_STATUS_STEPS)[number][])
-    : [
-        'pending_callback',
-        'approved',
-        'on_the_way',
-        'arrived',
-        'process_started',
-        'repair_started',
-        'repair_completed',
-        'payment_received',
-        'completed',
-      ];
+  const STATUS_STEPS: Booking['status'][] = [
+    'pending_callback',
+    'approved',
+    'on_the_way',
+    'arrived',
+    'process_started',
+    'repair_started',
+    'repair_completed',
+    'payment_received',
+    'completed'
+  ];
 
   if (loading) {
     return (
@@ -240,11 +260,8 @@ export default function MyBookings() {
                           'bg-blue-50 text-[#2F70E9]'
                         }`}>
                           {booking.status.replace('_', ' ')}
-                        </span>                        {booking.appliedOffer && (
-                          <span className="ml-2 px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-amber-50 text-amber-700">
-                            Gift applied
-                          </span>
-                        )}                        <div className="text-[9px] text-gray-300 font-mono font-black">
+                        </span>
+                        <div className="text-[9px] text-gray-300 font-mono font-black">
                            #{booking.id.slice(-6).toUpperCase()}
                         </div>
                       </div>
@@ -401,7 +418,7 @@ export default function MyBookings() {
                                 </div>
                                 <div className="flex-1 pt-1.5 transition-all">
                                     <p className={`text-[14px] font-black ${isCurrent ? 'text-gray-900 scale-105 origin-left' : inHistory ? 'text-gray-600' : 'text-gray-300'} font-display`}>
-                                      {isGiftBooking ? String(stepStatus) : getStatusLabel(stepStatus as Booking['status'])}
+                                      {getStatusLabel(stepStatus)}
                                     </p>
                                     {isCurrent && (
                                       <motion.div 
@@ -477,31 +494,10 @@ export default function MyBookings() {
                  </div>
                  <div>
                     <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5 font-mono">CURRENT STAGE</p>
-                    <p className="text-[13px] font-black text-gray-900 uppercase tracking-tight">
-                      {selectedBooking.giftStatus ? String(selectedBooking.giftStatus) : getStatusLabel(selectedBooking.status)}
-                    </p>
+                    <p className="text-[13px] font-black text-gray-900 uppercase tracking-tight">{getStatusLabel(selectedBooking.status)}</p>
                  </div>
                </div>
             </div>
-
-            {selectedBooking.appliedOffer && (
-              <div className="bg-amber-50 p-6 rounded-[32px] border border-amber-100 shadow-sm mb-5">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 bg-white rounded-[20px] flex items-center justify-center text-amber-600 shadow-sm">
-                    <Gift size={24} />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">First order gift</p>
-                    <p className="text-base font-black text-gray-900 mt-1">{selectedBooking.appliedOffer}</p>
-                    {selectedBooking.rewardStatus === 'rejected' && (
-                      <p className="text-[10px] mt-2 font-black uppercase tracking-widest text-rose-600">
-                        Reward rejected{selectedBooking.rewardRejectedReason ? `: ${selectedBooking.rewardRejectedReason}` : ''}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Service info */}
             <div className="bg-white p-10 rounded-[48px] border border-gray-50 shadow-[0_12px_40px_rgba(0,0,0,0.02)] mb-5">
@@ -610,7 +606,6 @@ export default function MyBookings() {
             <div className="grid grid-cols-2 gap-5 mb-5">
                <motion.button 
                 whileTap={{ scale: 0.95 }}
-                onClick={() => handleReschedule(selectedBooking.id)}
                 className="bg-white border border-gray-100 py-6 rounded-[32px] text-xs font-black uppercase tracking-widest text-gray-400 shadow-sm active:bg-gray-50 transition-all font-mono"
                >
                  Reschedule

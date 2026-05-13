@@ -4,277 +4,123 @@ import path from "path";
 import { fileURLToPath } from "url";
 import axios from "axios";
 import dotenv from "dotenv";
-import cron from "node-cron";
-import { runFirestoreBackup } from "./src/lib/backup/firestoreBackup.ts";
-import { getApps } from "firebase-admin/app";
+import { initializeApp, getApps, applicationDefault } from "firebase-admin/app";
 import { getFirestore, Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import jwt from "jsonwebtoken";
-import admin from "firebase-admin";
 import cookieParser from "cookie-parser";
-import { registerSupportRoutes } from "./src/routes/support.ts";
-
-let supabaseAdmin: any;
-
-const loadSupabaseAdmin = async () => {
-  const candidates = [
-    // If server.ts is in /src (Render container), this is correct:
-    new URL("./lib/supabase-admin.ts", import.meta.url),
-    // If server.ts is in repo root locally, this is correct:
-    new URL("./src/lib/supabase-admin.ts", import.meta.url),
-  ];
-
-  for (const url of candidates) {
-    try {
-      const mod = await import(url.href);
-      if ('supabaseAdmin' in mod) return mod.supabaseAdmin;
-    } catch {
-      // keep trying
-    }
-  }
-
-  // Supabase is optional for this app to run (Firestore-only flows).
-  // If Supabase env vars are missing or the module can't be imported, start the server with null.
-  return null;
-};
-
-supabaseAdmin = await loadSupabaseAdmin();
-import cors from "cors";
-import fs from 'fs';
 
 dotenv.config();
 
-const FIREBASE_KEY_STR = process.env.FIREBASE_KEY;
-const serviceAccount = FIREBASE_KEY_STR ? JSON.parse(FIREBASE_KEY_STR) : null;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Firebase Admin initialization
+import fs from 'fs';
 const configPath = path.resolve(__dirname, "firebase-applet-config.json");
 let firebaseConfig: any = {};
 try {
   if (fs.existsSync(configPath)) {
     firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    console.log("[FIREBASE] Config loaded for project:", firebaseConfig.projectId);
+    console.log("[FIREBASE] Config loaded. Target Project:", firebaseConfig.projectId);
   }
 } catch (e) {
   console.error("[FIREBASE] Read config error:", e);
 }
 
-const projectId = firebaseConfig.projectId || process.env.GOOGLE_CLOUD_PROJECT || process.env.VITE_FIREBASE_PROJECT_ID;
+const configProjectId = firebaseConfig.projectId;
 const databaseId = firebaseConfig.firestoreDatabaseId;
 
-// CRITICAL: Set environment variables for Google Cloud libraries
-if (projectId) {
-  process.env.GOOGLE_CLOUD_PROJECT = projectId;
-  process.env.GCLOUD_PROJECT = projectId;
-}
-
-console.log("[FIREBASE] Expected Project:", projectId, "Expected Database:", databaseId);
-
-let adminApp: any = null;
+let adminApp: any;
 try {
-  if (serviceAccount && projectId) {
-    if (getApps().length === 0) {
-      adminApp = admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount as any),
-        projectId: projectId,
-      });
-
-      console.log("[FIREBASE] Admin App initialized with Service Account");
-    } else {
-      adminApp = getApps()[0];
-    }
+  if (getApps().length === 0) {
+    adminApp = initializeApp({
+      credential: applicationDefault()
+    });
+    console.log("[FIREBASE] Admin App initialized via applicationDefault.");
   } else {
-    console.warn("[FIREBASE] Missing FIREBASE_KEY and/or projectId; skipping Firebase Admin init.");
-    adminApp = getApps()[0] ?? null;
+    adminApp = getApps()[0];
   }
-} catch (e) {
-  console.error("[FIREBASE] Admin App initialization error:", e);
-  adminApp = getApps()[0] ?? null;
+} catch (e: any) {
+  console.warn("[FIREBASE] Ambient initialization failed:", e.message);
+  try {
+    adminApp = initializeApp({
+      projectId: configProjectId || process.env.GOOGLE_CLOUD_PROJECT,
+      credential: applicationDefault()
+    });
+    console.log("[FIREBASE] Admin App initialized with Project ID override.");
+  } catch (e2: any) {
+    console.error("[FIREBASE] Fatal initialization error:", e2.message);
+    adminApp = getApps()[0];
+  }
 }
+
+// Diagnostic: Log current environment project
+const effectiveProjectId = adminApp.options.projectId || process.env.GOOGLE_CLOUD_PROJECT || "unknown";
+console.log(`[FIREBASE] Effective Project ID for operations: ${effectiveProjectId}`);
 
 let db: any;
 let signBlobAvailable = true;
 
 const initFirestore = async () => {
-  if (!adminApp) {
-    console.warn("[FIREBASE] adminApp is null; skipping Firestore init.");
-    return;
-  }
   const dbName = databaseId && databaseId !== "(default)" ? databaseId : undefined;
   
-  try {
-    // Try with the provided databaseId first
-    console.log("[FIREBASE] Trying Firestore with database:", dbName || "(default)");
-    const tempDb = getFirestore(adminApp, dbName);
-    
-    // Quick test write
-    await tempDb.collection("test").doc("connection").set({ 
-      lastSeen: new Date().toISOString(),
-      status: "active",
-      database: dbName || "(default)"
-    });
-    
-    db = tempDb;
-    console.log("[FIREBASE] SUCCESS: Firestore connected to:", dbName || "(default)");
-  } catch (err: any) {
-    console.warn("[FIREBASE] FAILED to connect to named database:", err.message);
-    
+  const strategies = [
+    { name: "Named Database (Config)", id: dbName },
+    { name: "Default Database", id: undefined },
+    { name: "(default) string", id: "(default)" }
+  ];
+
+  let lastError = null;
+  for (const strategy of strategies) {
     try {
-      // Fallback to default database
-      console.log("[FIREBASE] Falling back to default database...");
-      const defaultDb = getFirestore(adminApp);
-      await defaultDb.collection("test").doc("connection").set({ 
+      console.log(`[FIREBASE] Strategy: ${strategy.name} on Project: ${effectiveProjectId}`);
+      const tempDb = getFirestore(adminApp, strategy.id);
+      
+      // Test write
+      await tempDb.collection("test").doc("connection").set({ 
         lastSeen: new Date().toISOString(),
-        status: "fallback-active",
-        database: "default"
-      });
-      db = defaultDb;
-      console.log("[FIREBASE] SUCCESS: Firestore connected to default database");
-    } catch (err2: any) {
-      console.error("[FIREBASE] CRITICAL: All Firestore connection attempts failed:", err2.message);
-      // Still set db to something so the app doesn't crash on boot, but operations will fail
-      db = getFirestore(adminApp, dbName);
+        status: "active",
+        strategy: strategy.name,
+        projectId: effectiveProjectId
+      }, { merge: true });
+      
+      db = tempDb;
+      console.log(`[FIREBASE] SUCCESS: Connection active via ${strategy.name}`);
+      return;
+    } catch (err: any) {
+      console.warn(`[FIREBASE] Strategy ${strategy.name} FAILED:`, err.message);
+      lastError = err;
     }
+  }
+
+  console.error("[FIREBASE] CRITICAL: All Firestore strategies failed. Using fallback instance.");
+  db = getFirestore(adminApp, dbName);
+  
+  if (lastError && (lastError.message.includes("permission") || lastError.message.includes("7"))) {
+    console.warn("================================================================================");
+    console.warn("FIREBASE PERMISSION ERROR DETECTED");
+    console.warn("Possible causes:");
+    console.warn("1. Service account does not have roles/datastore.user on project", effectiveProjectId);
+    console.warn("2. The Project ID in firebase-applet-config.json is incorrect.");
+    console.warn("3. If using a custom project, ensure a Service Account Key JSON is provided.");
+    console.warn("================================================================================");
   }
 };
 
-initFirestore();
 
-
-const authAdmin = adminApp ? getAuth(adminApp) : null;
+const authAdmin = getAuth(adminApp);
 const JWT_SECRET = process.env.JWT_SECRET || "nanjangud-service-pro-secret-123";
 
 const app = express();
-
-// CORS configuration - Allow requests from frontend domains
-const allowedOrigins = [
-  'https://turbotech1.vercel.app',
-  'https://turbotech.vercel.app',
-  'https://turbo-tech-six.vercel.app',
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:3000'
-];
-
-// Add any additional origins from environment variable
-if (process.env.ALLOWED_ORIGINS) {
-  const envOrigins = process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim());
-  allowedOrigins.push(...envOrigins);
-  console.log('[CORS] Added origins from env:', envOrigins);
-}
-
-const corsOptions = {
-  origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.warn(`[CORS] Rejected origin: ${origin}`);
-      callback(new Error('CORS policy violation'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
-  maxAge: 86400 // 24 hours
-};
-
-app.use(cors(corsOptions));
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (!origin || allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin || '*');
-    res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    res.header('Access-Control-Allow-Credentials', 'true');
-  }
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-  next();
-});
-
 app.use(express.json());
 app.use(cookieParser());
 
 const ADMIN_NUMBER = "9449989467";
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || "123456"; // placeholder
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || "123456"; // Use placeholder as per instructions if not set
 const CHAT_ID = process.env.CHAT_ID || "123456";
 
-// Where Telegram will forward ALL conversations (admin)
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "6053551486";
-
-// Register support routes (Telegram + website chat)
-// NOTE: keep this outside of any optional init failures.
-console.log('[SUPPORT] Registering support routes on backend...');
-registerSupportRoutes(app, {
-  telegramToken: TELEGRAM_TOKEN,
-  adminChatId: ADMIN_CHAT_ID,
-  botChatId: CHAT_ID,
-  db,
-});
-console.log('[SUPPORT] Support routes registered: POST /api/support/chat, POST /api/support/telegram-webhook');
-
-
 // API Routes
-
-const BACKUP_DIR = path.resolve(__dirname, "firestore_backups");
-
-// Manual backup trigger (safe + idempotent by timestamped filenames)
-app.post("/backup-now", async (req, res) => {
-  try {
-    if (!db) {
-      return res.status(503).json({ status: "error", error: "Firestore db is not initialized" });
-    }
-
-    const result = await runFirestoreBackup({
-      db,
-      backupDir: BACKUP_DIR,
-      telegramToken: TELEGRAM_TOKEN,
-      adminChatId: ADMIN_CHAT_ID,
-      alsoLogToFirestore: true,
-    });
-
-    return res.json({ status: result.status, filename: result.filename, error: result.error ?? null });
-  } catch (e: any) {
-    return res.status(500).json({ status: "error", error: e?.message ?? String(e) });
-  }
-});
-
-// Optional convenience GET (returns the same as POST)
-app.get("/backup-now", async (req, res) => {
-  // delegate to POST logic
-  return res.redirect("/backup-now");
-});
-
-// Schedule daily backup every 24 hours.
-// Uses a cron expression (at minute 0 every 24h): "0 */24 * * *" is not supported as intended across all cron libs,
-// so we run at midnight server time: "0 0 * * *".
-cron.schedule("0 0 * * *", async () => {
-  if (!db) {
-    console.warn("[BACKUP] Skipped: Firestore db not initialized");
-    return;
-  }
-
-  const result = await runFirestoreBackup({
-    db,
-    backupDir: BACKUP_DIR,
-    telegramToken: TELEGRAM_TOKEN,
-    adminChatId: ADMIN_CHAT_ID,
-    alsoLogToFirestore: true,
-  });
-
-  if (result.status === "success") {
-    console.log(`[BACKUP] Success: ${result.filename}`);
-  } else {
-    console.error(`[BACKUP] Failure: ${result.error}`);
-  }
-});
-
-// In-memory OTP routes
 const otpStore = new Map<string, { code: string, expiresAt: Date }>();
 
 // Helper to normalize phone numbers
@@ -388,8 +234,6 @@ app.post("/api/verify-otp", async (req, res) => {
           phone,
           role: phone === ADMIN_NUMBER ? "admin" : "customer",
           createdAt: new Date().toISOString(),
-          points: 0,
-          redeemedRewardIds: [],
         };
         const resDoc = await db.collection("users").add(newUser);
         userData = { id: resDoc.id, ...newUser };
@@ -420,17 +264,12 @@ app.post("/api/verify-otp", async (req, res) => {
     let firebaseToken = "";
     if (signBlobAvailable) {
       try {
-        if (!authAdmin) {
-          // No Firebase Admin auth configured (e.g. missing FIREBASE_KEY)
-          console.warn("[AUTH] authAdmin is null; skipping firebaseToken creation");
-        } else {
-          // Add custom claims for easier rule checks
-          firebaseToken = await authAdmin.createCustomToken(userData.id, { 
-            phone: phone,
-            role: userData.role 
-          });
-          console.log(`[AUTH] Custom token created for ${phone}`);
-        }
+        // Add custom claims for easier rule checks
+        firebaseToken = await authAdmin.createCustomToken(userData.id, { 
+          phone: phone,
+          role: userData.role 
+        });
+        console.log(`[AUTH] Custom token created for ${phone}`);
       } catch (err: any) {
         if (err.message && err.message.includes('signBlob')) {
           console.warn("[AUTH] signBlob permission missing, disabling custom tokens for this session");
@@ -502,15 +341,10 @@ app.get("/api/me", async (req, res) => {
     let firebaseToken = "";
     if (signBlobAvailable) {
       try {
-        if (!authAdmin) {
-          res.status(503).json({ error: "Firebase admin auth not configured on server" });
-          return;
-        }
-        firebaseToken = await authAdmin?.createCustomToken(decoded.id, {
+        firebaseToken = await authAdmin.createCustomToken(decoded.id, {
           phone: decoded.phone,
           role: decoded.role
         });
-        if (!firebaseToken) return;
       } catch (err: any) {
         if (err.message && err.message.includes('signBlob')) {
           signBlobAvailable = false;
@@ -528,32 +362,22 @@ app.get("/api/me", async (req, res) => {
 
 app.get("/api/health", async (req, res) => {
   try {
-    if (!db) {
-      return res.status(503).json({
-        status: "error",
-        firestore: "disconnected",
-        error: "Firestore db is not initialized (adminApp/db missing)",
-        projectId,
-        databaseId,
-      });
-    }
-
     const testDoc = await db.collection("test").doc("connection").get();
-    return res.json({
-      status: "ok",
-      firestore: "connected",
+    res.json({ 
+      status: "ok", 
+      firestore: "connected", 
       exists: testDoc.exists,
       data: testDoc.exists ? testDoc.data() : null,
       projectId,
-      databaseId,
+      databaseId
     });
   } catch (error) {
-    return res.status(500).json({
-      status: "error",
-      firestore: "disconnected",
+    res.status(500).json({ 
+      status: "error", 
+      firestore: "disconnected", 
       error: error instanceof Error ? error.message : String(error),
       projectId,
-      databaseId,
+      databaseId
     });
   }
 });
@@ -574,48 +398,9 @@ app.post("/api/bookings", async (req, res) => {
     };
 
     console.log(`[BOOKING] Attempting creation for user ${decoded.phone} via Admin API (DB: ${db.databaseId || 'default'})...`);
-// Supabase insert
-const { data: inserted, error: insertError } = await supabaseAdmin
-      .from('bookings')
-      .insert({
-        customer_id: bookingData.customerId,
-        customer_name: bookingData.customerName,
-        phone: bookingData.phone,
-        address: bookingData.address,
-        problem: bookingData.problem,
-        date: bookingData.date || null,
-        time_slot: bookingData.timeSlot || null,
-        type: bookingData.type || 'normal',
-        status: bookingData.status,
-        technician_id: bookingData.technicianId || null,
-        applied_offer: bookingData.appliedOffer || null,
-        is_first_order: bookingData.isFirstOrder || false,
-        reward_status: bookingData.rewardStatus || null,
-        reward_rejected_reason: bookingData.rewardRejectedReason || null,
-        reward_rejected_at: bookingData.rewardRejectedAt ? new Date(bookingData.rewardRejectedAt).toISOString() : null,
-        tech_location: bookingData.techLocation || null,
-        tech_location_share_enabled: !!bookingData.techLocationShareEnabled,
-        location: bookingData.location || null,
-        status_history: bookingData.statusHistory || [],
-        eta: bookingData.eta || null,
-        distance: bookingData.distance || null,
-        total: bookingData.total || null,
-        service_charge: bookingData.serviceCharge || null,
-        parts_cost: bookingData.partsCost || null,
-        house_photo: bookingData.housePhoto || null,
-        created_at: bookingData.createdAt ? new Date(bookingData.createdAt).toISOString() : new Date().toISOString(),
-        updated_at: bookingData.updatedAt ? new Date(bookingData.updatedAt).toISOString() : new Date().toISOString(),
-      })
-      .select('id')
-      .single();
-
-if (insertError) {
-  console.error('[BOOKING] Supabase insert failed:', insertError);
-  throw insertError;
-}
-
-console.log('[BOOKING] Success:', inserted?.id);
-res.json({ success: true, id: inserted?.id });
+    const docRef = await db.collection("bookings").add(bookingData);
+    console.log(`[BOOKING] Success: ${docRef.id}`);
+    res.json({ success: true, id: docRef.id });
   } catch (error: any) {
     console.error(`[BOOKING] Error creating booking via API for ${normalizePhone(req.body.phone)}:`, error);
     const isPermissionError = error.message && (error.message.includes("permission") || error.message.includes("7"));
@@ -676,75 +461,20 @@ app.patch("/api/bookings/:id", async (req, res) => {
 
   try {
     const decoded: any = jwt.verify(token, JWT_SECRET);
-
-    // Update Supabase by id
-    // First fetch booking to check authorization
-    const { data: existing, error: fetchErr } = await supabaseAdmin
-      .from('bookings')
-      .select('*')
-      .eq('id', req.params.id)
-      .single();
-
-    if (fetchErr) return res.status(404).json({ error: "Booking not found" });
-    if (!existing) return res.status(404).json({ error: "Booking not found" });
-
-    const isOwner = existing.customer_id === decoded.id || existing.phone === decoded.phone;
-    const isAdminUser = decoded.role === 'admin';
-    if (!isOwner && !isAdminUser) return res.status(403).json({ error: "Unauthorized" });
-
-    const payload: any = { ...req.body, updated_at: new Date().toISOString() };
-
-    // Normalize request fields to your supabase schema
-    const updateData: any = {};
-
-    if (req.body.status) {
-      updateData.status = req.body.status;
-      // Append to status_history array (jsonb)
-      const nextHistory = Array.isArray(existing.status_history) ? existing.status_history.slice() : [];
-      nextHistory.push({ status: req.body.status, timestamp: new Date().toISOString() });
-      updateData.status_history = nextHistory;
+    const docRef = db.collection("bookings").doc(req.params.id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists) return res.status(404).json({ error: "Booking not found" });
+    
+    const data = doc.data();
+    if (data.customerId !== decoded.id && data.phone !== decoded.phone && decoded.role !== 'admin') {
+      return res.status(403).json({ error: "Unauthorized" });
     }
 
-    if (req.body.techLocation !== undefined || req.body.tech_location !== undefined) {
-      updateData.tech_location = req.body.techLocation ?? req.body.tech_location;
-    }
-
-    if (req.body.techLocationShareEnabled !== undefined) {
-      updateData.tech_location_share_enabled = !!req.body.techLocationShareEnabled;
-    }
-
-    // Pass-through other known fields if your frontend sends them
-    if (req.body.address !== undefined) updateData.address = req.body.address;
-    if (req.body.problem !== undefined) updateData.problem = req.body.problem;
-    if (req.body.phone !== undefined) updateData.phone = req.body.phone;
-    if (req.body.location !== undefined) updateData.location = req.body.location;
-    if (req.body.date !== undefined) updateData.date = req.body.date;
-    if (req.body.timeSlot !== undefined) updateData.time_slot = req.body.timeSlot;
-    if (req.body.total !== undefined) updateData.total = req.body.total;
-    if (req.body.distance !== undefined) updateData.distance = req.body.distance;
-    if (req.body.eta !== undefined) updateData.eta = req.body.eta;
-    if (req.body.serviceCharge !== undefined) updateData.service_charge = req.body.serviceCharge;
-    if (req.body.partsCost !== undefined) updateData.parts_cost = req.body.partsCost;
-    if (req.body.housePhoto !== undefined) updateData.house_photo = req.body.housePhoto;
-
-    // Technician toggles live location and location updates
-    if (req.body.rewardStatus !== undefined) updateData.reward_status = req.body.rewardStatus;
-    if (req.body.rewardRejectedReason !== undefined) updateData.reward_rejected_reason = req.body.rewardRejectedReason;
-    if (req.body.rewardRejectedAt !== undefined)
-      updateData.reward_rejected_at = new Date(req.body.rewardRejectedAt).toISOString();
-
-    // updated timestamp
-    updateData.updated_at = new Date().toISOString();
-
-    const { error: updErr } = await supabaseAdmin
-      .from('bookings')
-      .update(updateData)
-      .eq('id', req.params.id);
-
-    if (updErr) {
-      console.error('Supabase booking update failed:', updErr);
-      return res.status(500).json({ error: 'Failed to update booking' });
-    }
+    await docRef.update({
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    });
 
     res.json({ success: true });
   } catch (error) {
@@ -753,50 +483,28 @@ app.patch("/api/bookings/:id", async (req, res) => {
   }
 });
 
-// Vite middleware for development only
-if (process.env.NODE_ENV !== "production") {
-  const vite = await createViteServer({
-    server: { middlewareMode: true },
-    appType: "spa",
-  });
-  app.use(vite.middlewares);
-} else {
-  // Backend-only deployment - no static file serving
-  app.get("/", (req, res) => {
-    res.json({
-      message: "TurboTech Backend API",
-      status: "running",
-      endpoints: {
-        health: "/api/health",
-        auth: "/api/send-otp, /api/verify-otp, /api/me, /api/logout",
-        bookings: "/api/bookings",
-        profile: "/api/update-profile"
-      }
-    });
-  });
+const PORT = 3000;
 
-  // Catch-all handler for undefined routes (prevents static file attempts)
-  app.use("*", (req, res) => {
-    res.status(404).json({
-      error: "Not Found",
-      message: "This is a backend API. Frontend is served separately.",
-      availableEndpoints: [
-        "GET /api/health",
-        "POST /api/send-otp",
-        "POST /api/verify-otp",
-        "GET /api/me",
-        "POST /api/logout",
-        "POST /api/update-profile",
-        "GET /api/bookings",
-        "POST /api/bookings",
-        "GET /api/bookings/:id",
-        "PATCH /api/bookings/:id"
-      ]
+async function startServer() {
+  await initFirestore();
+  
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
     });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 
-const PORT = 3000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+startServer();

@@ -66,39 +66,21 @@ service cloud.firestore {
                     incoming().customerId == request.auth.uid &&
                     isValidBooking(incoming());
 
-      // Technician updates are done in two ways:
-      // 1) techLocation updates (techLocation + updatedAt)
-      // 2) status updates (status + statusHistory + updatedAt)
-      // 3) toggling techLocationShareEnabled (techLocationShareEnabled)
       allow update: if isSignedIn() && (
         (
           isAdmin(request.auth.uid) || 
           existing().customerId == request.auth.uid || 
           existing().technicianId == request.auth.uid
-        ) && (
-          // Admin full update
-          isAdmin(request.auth.uid) ||
-
+        ) && 
+        isValidBooking(incoming()) && (
           // Action: Customer cancel
-          (existing().customerId == request.auth.uid &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) &&
-            incoming().status == 'cancelled') ||
-
+          (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) && incoming().status == 'cancelled') ||
           // Action: Tech location update
-          (existing().technicianId == request.auth.uid &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['techLocation', 'updatedAt'])) ||
-
-          // Action: Tech enable/disable live location switch
-          (existing().technicianId == request.auth.uid &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['techLocationShareEnabled', 'updatedAt'])) ||
-
-          // Action: Tech status update (tech can toggle status + statusHistory + updatedAt)
-          (existing().technicianId == request.auth.uid &&
-            (
-              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusHistory', 'updatedAt', 'techLocationShareEnabled']) ||
-              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusHistory', 'updatedAt'])
-            )
-          )
+          (existing().technicianId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['techLocation', 'updatedAt'])) ||
+          // Action: Tech status update
+          (existing().technicianId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusHistory', 'updatedAt', 'techLocationShareEnabled'])) ||
+          // Admin full update
+          isAdmin(request.auth.uid)
         )
       );
 
