@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 import { db } from '../../lib/firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { Booking } from '../../types';
+
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   MapPin, 
@@ -42,37 +44,40 @@ export default function TechJobs() {
     });
   }, [user]);
 
-  // Real-time location sharing
+  // Real-time location sharing (send updates via API to avoid Firestore permission issues)
   useEffect(() => {
-    let watchId: number;
+    let watchId: number | undefined;
     if (sharing) {
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
-          updateDoc(doc(db, 'bookings', sharing), {
-            techLocation: { lat: pos.coords.latitude, lng: pos.coords.longitude },
-            updatedAt: serverTimestamp()
-          });
+          axios.patch(
+            `${import.meta.env.VITE_API_URL}/api/bookings/${sharing}`,
+            {
+              techLocation: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+              techLocationShareEnabled: true
+            },
+            { withCredentials: true }
+          );
         },
         (err) => console.error(err),
         { enableHighAccuracy: true }
       );
     }
     return () => {
-      if (watchId) navigator.geolocation.clearWatch(watchId);
+      if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
     };
   }, [sharing]);
 
   const updateStatus = async (id: string, status: Booking['status'], extra: any = {}) => {
-    await updateDoc(doc(db, 'bookings', id), {
-      status,
-      technicianId: user?.id,
-      statusHistory: arrayUnion({
+    await axios.patch(
+      `${import.meta.env.VITE_API_URL}/api/bookings/${id}`,
+      {
         status,
-        timestamp: new Date().toISOString()
-      }),
-      updatedAt: serverTimestamp(),
-      ...extra
-    });
+        technicianId: user?.id,
+        ...extra
+      },
+      { withCredentials: true }
+    );
   };
 
   const getStatusLabel = (status: Booking['status']) => {
@@ -186,8 +191,12 @@ export default function TechJobs() {
                 <>
                   {!job.techLocationShareEnabled ? (
                     <button 
-                      onClick={() => {
-                        updateDoc(doc(db, 'bookings', job.id), { techLocationShareEnabled: true });
+                      onClick={async () => {
+                        await axios.patch(
+                          `${import.meta.env.VITE_API_URL}/api/bookings/${job.id}`,
+                          { techLocationShareEnabled: true },
+                          { withCredentials: true }
+                        );
                         setSharing(job.id);
                       }}
                       className="w-full bg-red-500 text-white py-5 rounded-[24px] font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-red-100 active:scale-95 transition-all"

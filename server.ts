@@ -9,6 +9,8 @@ import { getFirestore, Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import jwt from "jsonwebtoken";
 import admin from "firebase-admin";
+import { supabaseAdmin } from "./src/lib/supabase-admin";
+
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import fs from 'fs';
@@ -444,9 +446,48 @@ app.post("/api/bookings", async (req, res) => {
     };
 
     console.log(`[BOOKING] Attempting creation for user ${decoded.phone} via Admin API (DB: ${db.databaseId || 'default'})...`);
-    const docRef = await db.collection("bookings").add(bookingData);
-    console.log(`[BOOKING] Success: ${docRef.id}`);
-    res.json({ success: true, id: docRef.id });
+// Supabase insert
+const { data: inserted, error: insertError } = await supabaseAdmin
+      .from('bookings')
+      .insert({
+        customer_id: bookingData.customerId,
+        customer_name: bookingData.customerName,
+        phone: bookingData.phone,
+        address: bookingData.address,
+        problem: bookingData.problem,
+        date: bookingData.date || null,
+        time_slot: bookingData.timeSlot || null,
+        type: bookingData.type || 'normal',
+        status: bookingData.status,
+        technician_id: bookingData.technicianId || null,
+        applied_offer: bookingData.appliedOffer || null,
+        is_first_order: bookingData.isFirstOrder || false,
+        reward_status: bookingData.rewardStatus || null,
+        reward_rejected_reason: bookingData.rewardRejectedReason || null,
+        reward_rejected_at: bookingData.rewardRejectedAt ? new Date(bookingData.rewardRejectedAt).toISOString() : null,
+        tech_location: bookingData.techLocation || null,
+        tech_location_share_enabled: !!bookingData.techLocationShareEnabled,
+        location: bookingData.location || null,
+        status_history: bookingData.statusHistory || [],
+        eta: bookingData.eta || null,
+        distance: bookingData.distance || null,
+        total: bookingData.total || null,
+        service_charge: bookingData.serviceCharge || null,
+        parts_cost: bookingData.partsCost || null,
+        house_photo: bookingData.housePhoto || null,
+        created_at: bookingData.createdAt ? new Date(bookingData.createdAt).toISOString() : new Date().toISOString(),
+        updated_at: bookingData.updatedAt ? new Date(bookingData.updatedAt).toISOString() : new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+
+if (insertError) {
+  console.error('[BOOKING] Supabase insert failed:', insertError);
+  throw insertError;
+}
+
+console.log('[BOOKING] Success:', inserted?.id);
+res.json({ success: true, id: inserted?.id });
   } catch (error: any) {
     console.error(`[BOOKING] Error creating booking via API for ${normalizePhone(req.body.phone)}:`, error);
     const isPermissionError = error.message && (error.message.includes("permission") || error.message.includes("7"));
@@ -507,29 +548,75 @@ app.patch("/api/bookings/:id", async (req, res) => {
 
   try {
     const decoded: any = jwt.verify(token, JWT_SECRET);
-    const docRef = db.collection("bookings").doc(req.params.id);
-    const doc = await docRef.get();
-    
-    if (!doc.exists) return res.status(404).json({ error: "Booking not found" });
-    
-    const data = doc.data();
-    if (data.customerId !== decoded.id && data.phone !== decoded.phone && decoded.role !== 'admin') {
-      return res.status(403).json({ error: "Unauthorized" });
-    }
 
-    const updatePayload: any = {
-      ...req.body,
-      updatedAt: new Date().toISOString()
-    };
+    // Update Supabase by id
+    // First fetch booking to check authorization
+    const { data: existing, error: fetchErr } = await supabaseAdmin
+      .from('bookings')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+
+    if (fetchErr) return res.status(404).json({ error: "Booking not found" });
+    if (!existing) return res.status(404).json({ error: "Booking not found" });
+
+    const isOwner = existing.customer_id === decoded.id || existing.phone === decoded.phone;
+    const isAdminUser = decoded.role === 'admin';
+    if (!isOwner && !isAdminUser) return res.status(403).json({ error: "Unauthorized" });
+
+    const payload: any = { ...req.body, updated_at: new Date().toISOString() };
+
+    // Normalize request fields to your supabase schema
+    const updateData: any = {};
 
     if (req.body.status) {
-      updatePayload.statusHistory = admin.firestore.FieldValue.arrayUnion({
-        status: req.body.status,
-        timestamp: new Date().toISOString()
-      });
+      updateData.status = req.body.status;
+      // Append to status_history array (jsonb)
+      const nextHistory = Array.isArray(existing.status_history) ? existing.status_history.slice() : [];
+      nextHistory.push({ status: req.body.status, timestamp: new Date().toISOString() });
+      updateData.status_history = nextHistory;
     }
 
-    await docRef.update(updatePayload);
+    if (req.body.techLocation !== undefined || req.body.tech_location !== undefined) {
+      updateData.tech_location = req.body.techLocation ?? req.body.tech_location;
+    }
+
+    if (req.body.techLocationShareEnabled !== undefined) {
+      updateData.tech_location_share_enabled = !!req.body.techLocationShareEnabled;
+    }
+
+    // Pass-through other known fields if your frontend sends them
+    if (req.body.address !== undefined) updateData.address = req.body.address;
+    if (req.body.problem !== undefined) updateData.problem = req.body.problem;
+    if (req.body.phone !== undefined) updateData.phone = req.body.phone;
+    if (req.body.location !== undefined) updateData.location = req.body.location;
+    if (req.body.date !== undefined) updateData.date = req.body.date;
+    if (req.body.timeSlot !== undefined) updateData.time_slot = req.body.timeSlot;
+    if (req.body.total !== undefined) updateData.total = req.body.total;
+    if (req.body.distance !== undefined) updateData.distance = req.body.distance;
+    if (req.body.eta !== undefined) updateData.eta = req.body.eta;
+    if (req.body.serviceCharge !== undefined) updateData.service_charge = req.body.serviceCharge;
+    if (req.body.partsCost !== undefined) updateData.parts_cost = req.body.partsCost;
+    if (req.body.housePhoto !== undefined) updateData.house_photo = req.body.housePhoto;
+
+    // Technician toggles live location and location updates
+    if (req.body.rewardStatus !== undefined) updateData.reward_status = req.body.rewardStatus;
+    if (req.body.rewardRejectedReason !== undefined) updateData.reward_rejected_reason = req.body.rewardRejectedReason;
+    if (req.body.rewardRejectedAt !== undefined)
+      updateData.reward_rejected_at = new Date(req.body.rewardRejectedAt).toISOString();
+
+    // updated timestamp
+    updateData.updated_at = new Date().toISOString();
+
+    const { error: updErr } = await supabaseAdmin
+      .from('bookings')
+      .update(updateData)
+      .eq('id', req.params.id);
+
+    if (updErr) {
+      console.error('Supabase booking update failed:', updErr);
+      return res.status(500).json({ error: 'Failed to update booking' });
+    }
 
     res.json({ success: true });
   } catch (error) {
