@@ -208,12 +208,16 @@ const CHAT_ID = process.env.CHAT_ID || "123456";
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "6053551486";
 
 // Register support routes (Telegram + website chat)
+// NOTE: keep this outside of any optional init failures.
+console.log('[SUPPORT] Registering support routes on backend...');
 registerSupportRoutes(app, {
   telegramToken: TELEGRAM_TOKEN,
   adminChatId: ADMIN_CHAT_ID,
   botChatId: CHAT_ID,
   db,
 });
+console.log('[SUPPORT] Support routes registered: POST /api/support/chat, POST /api/support/telegram-webhook');
+
 
 // API Routes
 
