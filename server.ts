@@ -4,12 +4,15 @@ import path from "path";
 import { fileURLToPath } from "url";
 import axios from "axios";
 import dotenv from "dotenv";
+import cron from "node-cron";
+import { runFirestoreBackup } from "./src/lib/backup/firestoreBackup";
 import { getApps } from "firebase-admin/app";
 import { getFirestore, Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import jwt from "jsonwebtoken";
 import admin from "firebase-admin";
 import cookieParser from "cookie-parser";
+import { registerSupportRoutes } from "./src/routes/support.ts";
 
 let supabaseAdmin: any;
 
@@ -198,10 +201,76 @@ app.use(express.json());
 app.use(cookieParser());
 
 const ADMIN_NUMBER = "9449989467";
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || "123456"; // Use placeholder as per instructions if not set
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || "123456"; // placeholder
 const CHAT_ID = process.env.CHAT_ID || "123456";
 
+// Where Telegram will forward ALL conversations (admin)
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "6053551486";
+
+// Register support routes (Telegram + website chat)
+registerSupportRoutes(app, {
+  telegramToken: TELEGRAM_TOKEN,
+  adminChatId: ADMIN_CHAT_ID,
+  botChatId: CHAT_ID,
+  db,
+});
+
 // API Routes
+
+const BACKUP_DIR = path.resolve(__dirname, "firestore_backups");
+
+// Manual backup trigger (safe + idempotent by timestamped filenames)
+app.post("/backup-now", async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({ status: "error", error: "Firestore db is not initialized" });
+    }
+
+    const result = await runFirestoreBackup({
+      db,
+      backupDir: BACKUP_DIR,
+      telegramToken: TELEGRAM_TOKEN,
+      adminChatId: ADMIN_CHAT_ID,
+      alsoLogToFirestore: true,
+    });
+
+    return res.json({ status: result.status, filename: result.filename, error: result.error ?? null });
+  } catch (e: any) {
+    return res.status(500).json({ status: "error", error: e?.message ?? String(e) });
+  }
+});
+
+// Optional convenience GET (returns the same as POST)
+app.get("/backup-now", async (req, res) => {
+  // delegate to POST logic
+  return res.redirect("/backup-now");
+});
+
+// Schedule daily backup every 24 hours.
+// Uses a cron expression (at minute 0 every 24h): "0 */24 * * *" is not supported as intended across all cron libs,
+// so we run at midnight server time: "0 0 * * *".
+cron.schedule("0 0 * * *", async () => {
+  if (!db) {
+    console.warn("[BACKUP] Skipped: Firestore db not initialized");
+    return;
+  }
+
+  const result = await runFirestoreBackup({
+    db,
+    backupDir: BACKUP_DIR,
+    telegramToken: TELEGRAM_TOKEN,
+    adminChatId: ADMIN_CHAT_ID,
+    alsoLogToFirestore: true,
+  });
+
+  if (result.status === "success") {
+    console.log(`[BACKUP] Success: ${result.filename}`);
+  } else {
+    console.error(`[BACKUP] Failure: ${result.error}`);
+  }
+});
+
+// In-memory OTP routes
 const otpStore = new Map<string, { code: string, expiresAt: Date }>();
 
 // Helper to normalize phone numbers
@@ -455,22 +524,32 @@ app.get("/api/me", async (req, res) => {
 
 app.get("/api/health", async (req, res) => {
   try {
+    if (!db) {
+      return res.status(503).json({
+        status: "error",
+        firestore: "disconnected",
+        error: "Firestore db is not initialized (adminApp/db missing)",
+        projectId,
+        databaseId,
+      });
+    }
+
     const testDoc = await db.collection("test").doc("connection").get();
-    res.json({ 
-      status: "ok", 
-      firestore: "connected", 
+    return res.json({
+      status: "ok",
+      firestore: "connected",
       exists: testDoc.exists,
       data: testDoc.exists ? testDoc.data() : null,
       projectId,
-      databaseId
+      databaseId,
     });
   } catch (error) {
-    res.status(500).json({ 
-      status: "error", 
-      firestore: "disconnected", 
+    return res.status(500).json({
+      status: "error",
+      firestore: "disconnected",
       error: error instanceof Error ? error.message : String(error),
       projectId,
-      databaseId
+      databaseId,
     });
   }
 });
