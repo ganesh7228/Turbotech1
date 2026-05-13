@@ -69,12 +69,22 @@ export default function TechJobs() {
   }, [sharing]);
 
   const updateStatus = async (id: string, status: Booking['status'], extra: any = {}) => {
+    const currentJob = jobs.find((j) => j.id === id);
+
+    let giftStatusUpdate: string | undefined;
+    if (currentJob?.giftStatus) {
+      if (status === 'dispatched') giftStatusUpdate = 'Gift dispatched';
+      if (status === 'on_the_way') giftStatusUpdate = 'Gift out for delivery';
+      if (status === 'arrived') giftStatusUpdate = 'Gift delivered';
+    }
+
     await axios.patch(
       `${import.meta.env.VITE_API_URL}/api/bookings/${id}`,
       {
         status,
         technicianId: user?.id,
-        ...extra
+        ...(giftStatusUpdate ? { giftStatus: giftStatusUpdate } : {}),
+        ...extra,
       },
       { withCredentials: true }
     );

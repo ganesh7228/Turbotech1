@@ -5,17 +5,21 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
   onSnapshot,
   orderBy,
   query,
   updateDoc,
+  getDocs,
+  addDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { Reward } from '../../types';
 import { Gift, ChevronLeft, Image as ImageIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAuth } from '../../contexts/AuthContext';
+
+type GiftStatus = 'Gift' | 'Gift dispatched' | 'Gift out for delivery' | 'Gift delivered';
 
 export default function RewardsView() {
   const { user } = useAuth();
@@ -72,6 +76,7 @@ export default function RewardsView() {
 
   const handleClaim = async (rewardId: string) => {
     if (!user?.id) return;
+
     const reward = rewards.find((r) => r.id === rewardId);
     if (!reward) return;
 
@@ -86,7 +91,7 @@ export default function RewardsView() {
     try {
       const userRef = doc(db, 'users', user.id);
 
-      // Fetch fresh data to reduce race conditions
+      // Refresh user data to reduce race conditions
       const freshSnap = await getDoc(userRef);
       const data = freshSnap.exists() ? freshSnap.data() : undefined;
 
@@ -108,10 +113,55 @@ export default function RewardsView() {
 
       const nextPoints = freshPoints - required;
 
+      // 1) Deduct points + mark reward redeemed
       await updateDoc(userRef, {
         points: nextPoints,
         redeemedRewardIds: arrayUnion(rewardId),
       });
+
+      // 2) Create a new “free gift order” booking pending admin approval
+      //    We reuse the existing booking flow by setting:
+      //    - status: pending_callback (admin will move it to approved)
+      //    - giftStatus: "Gift" (pending admin)
+      //    The normal technician flow will pick up once admin sets status to approved.
+      const bookingData = {
+        customerId: user.id,
+        customerName: user.name || user.phone,
+        phone: user.phone,
+
+        // Fill required booking fields with safe defaults; technician UI primarily needs
+        // address/problem/status/phone/customerName plus status progression.
+        address: 'Free gift delivery',
+        problem: reward.title || 'Free Gift',
+        date: null,
+        timeSlot: 'ASAP',
+        type: 'quick',
+
+        // Start gift approval flow
+        status: 'pending_callback',
+        statusHistory: [
+          { status: 'pending_callback', timestamp: new Date().toISOString() },
+        ],
+
+        // Gift lifecycle
+        giftStatus: 'Gift' as GiftStatus,
+
+        // existing reward rejection UI uses these fields; we keep them empty for now
+        rewardStatus: 'pending',
+        rewardRejectedReason: null,
+        rewardRejectedAt: null,
+
+        // monetary fields are irrelevant for gifts
+        serviceCharge: 0,
+        partsCost: 0,
+        total: 0,
+
+        appliedOffer: reward.title || null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await addDoc(collection(db, 'bookings'), bookingData);
 
       // Optimistic UI sync
       setPoints(nextPoints);

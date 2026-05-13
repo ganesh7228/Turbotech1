@@ -154,17 +154,23 @@ export default function MyBookings() {
     }
   };
 
-  const STATUS_STEPS: Booking['status'][] = [
-    'pending_callback',
-    'approved',
-    'on_the_way',
-    'arrived',
-    'process_started',
-    'repair_started',
-    'repair_completed',
-    'payment_received',
-    'completed'
-  ];
+  const GIFT_STATUS_STEPS = ['Gift', 'Gift dispatched', 'Gift out for delivery', 'Gift delivered'] as const;
+
+  const isGiftBooking = !!selectedBooking?.giftStatus;
+
+  const STATUS_STEPS: Booking['status'][] | (typeof GIFT_STATUS_STEPS)[number][] = isGiftBooking
+    ? (GIFT_STATUS_STEPS as unknown as (typeof GIFT_STATUS_STEPS)[number][])
+    : [
+        'pending_callback',
+        'approved',
+        'on_the_way',
+        'arrived',
+        'process_started',
+        'repair_started',
+        'repair_completed',
+        'payment_received',
+        'completed',
+      ];
 
   if (loading) {
     return (
@@ -395,7 +401,7 @@ export default function MyBookings() {
                                 </div>
                                 <div className="flex-1 pt-1.5 transition-all">
                                     <p className={`text-[14px] font-black ${isCurrent ? 'text-gray-900 scale-105 origin-left' : inHistory ? 'text-gray-600' : 'text-gray-300'} font-display`}>
-                                      {getStatusLabel(stepStatus)}
+                                      {isGiftBooking ? String(stepStatus) : getStatusLabel(stepStatus as Booking['status'])}
                                     </p>
                                     {isCurrent && (
                                       <motion.div 
@@ -471,7 +477,9 @@ export default function MyBookings() {
                  </div>
                  <div>
                     <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5 font-mono">CURRENT STAGE</p>
-                    <p className="text-[13px] font-black text-gray-900 uppercase tracking-tight">{getStatusLabel(selectedBooking.status)}</p>
+                    <p className="text-[13px] font-black text-gray-900 uppercase tracking-tight">
+                      {selectedBooking.giftStatus ? String(selectedBooking.giftStatus) : getStatusLabel(selectedBooking.status)}
+                    </p>
                  </div>
                </div>
             </div>

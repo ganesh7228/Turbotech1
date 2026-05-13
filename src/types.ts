@@ -35,6 +35,11 @@ export type BookingType = 'normal' | 'quick';
 export interface Booking {
   appliedOffer?: string | null;
   isFirstOrder?: boolean;
+
+  // Free-gift/reward approval flow (customer claims reward using points)
+  // Admin approves => giftStatus moves through Gift -> Gift dispatched -> Gift out for delivery -> Gift delivered
+  giftStatus?: string;
+
   rewardStatus?: RewardStatus;
   rewardRejectedReason?: string;
   rewardRejectedAt?: string;

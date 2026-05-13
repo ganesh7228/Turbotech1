@@ -116,6 +116,19 @@ export default function AdminBookings() {
                 >
                   Reject
                 </button>
+                {booking.giftStatus === 'Gift' && (
+                  <button
+                    onClick={() =>
+                      updateStatus(booking.id, 'approved', {
+                        giftStatus: 'Gift dispatched',
+                      })
+                    }
+                    className="px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-bold uppercase shadow-lg shadow-blue-200 flex items-center gap-1"
+                  >
+                    Approve Gift <ChevronRight size={10} />
+                  </button>
+                )}
+
                 {booking.appliedOffer && booking.rewardStatus !== 'rejected' && (
                   <button
                     onClick={() => handleRejectGift(booking)}
@@ -124,8 +137,9 @@ export default function AdminBookings() {
                     Reject Gift
                   </button>
                 )}
-                {getStatusAction(booking.status) && (
-                  <button 
+
+                {getStatusAction(booking.status) && booking.giftStatus !== 'Gift' && (
+                  <button
                     onClick={() => updateStatus(booking.id, getStatusAction(booking.status)!)}
                     className="px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-bold uppercase shadow-lg shadow-blue-200 flex items-center gap-1"
                   >
