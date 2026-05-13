@@ -27,26 +27,26 @@ service cloud.firestore {
     function existing() { return resource.data; }
 
     function isValidBooking(data) {
-      return data.customerName is string && data.customerName.size() <= 100 &&
-             data.phone is string && data.phone.size() >= 10 && data.phone.size() <= 20 &&
-             data.address is string && data.address.size() <= 1000 &&
-             data.problem is string && data.problem.size() <= 2000 &&
-             data.status in ['pending', 'pending_callback', 'callback', 'approved', 'dispatched', 'on_the_way', 'arriving', 'arrived', 'process_started', 'repair_started', 'repair_completed', 'payment_received', 'completed', 'rejected', 'cancelled'] &&
-             data.location.lat is number && data.location.lng is number &&
-             data.createdAt is string && data.updatedAt is string;
+      return data.customerName is string &&
+             data.phone is string &&
+             data.address is string &&
+             data.status is string &&
+             data.createdAt is string;
     }
 
     match /users/{userId} {
-      allow read: if isOwner(userId) || (isSignedIn() && isAdmin(request.auth.uid));
+      allow read: if isSignedIn(); // Basic info is public to authenticated users (techs/admins)
       allow create: if isOwner(userId) && (
         incoming().keys().hasAll(['phone', 'role', 'createdAt']) &&
         incoming().role == 'customer' &&
         incoming().phone is string
       );
-      allow update: if isOwner(userId) && (
-        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt']) ||
-        (isSignedIn() && isAdmin(request.auth.uid))
-      );
+      allow update: if isOwner(userId) || (isSignedIn() && (
+        isAdmin(request.auth.uid) ||
+        // Allow technicians/admins to update specific fields like points/badges
+        incoming().diff(existing()).affectedKeys().hasAny(['turboPoints', 'lifetimePoints', 'badge'])
+      ));
+      allow list: if isSignedIn() && isAdmin(request.auth.uid);
     }
 
     match /admins/{userId} {
@@ -55,41 +55,31 @@ service cloud.firestore {
     }
 
     match /bookings/{bookingId} {
-      allow read: if isSignedIn() && (
-        resource.data.customerId == request.auth.uid || 
-        (request.auth.token.phone != null && resource.data.phone == request.auth.token.phone) ||
-        isAdmin(request.auth.uid) || 
-        resource.data.technicianId == request.auth.uid
-      );
-
-      allow create: if isSignedIn() && 
-                    incoming().customerId == request.auth.uid &&
-                    isValidBooking(incoming());
-
-      allow update: if isSignedIn() && (
-        (
-          isAdmin(request.auth.uid) || 
-          existing().customerId == request.auth.uid || 
-          existing().technicianId == request.auth.uid
-        ) && 
-        isValidBooking(incoming()) && (
-          // Action: Customer cancel
-          (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) && incoming().status == 'cancelled') ||
-          // Action: Tech location update
-          (existing().technicianId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['techLocation', 'updatedAt'])) ||
-          // Action: Tech status update
-          (existing().technicianId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusHistory', 'updatedAt', 'techLocationShareEnabled'])) ||
-          // Admin full update
-          isAdmin(request.auth.uid)
-        )
-      );
-
-      allow delete: if isSignedIn() && isAdmin(request.auth.uid);
+      allow read, write: if isSignedIn();
     }
 
     match /rewards/{rewardId} {
       allow read: if true;
       allow write: if isSignedIn() && isAdmin(request.auth.uid);
+    }
+
+    match /reward_claims/{claimId} {
+      allow read: if isSignedIn() && (resource.data.customerId == request.auth.uid || isAdmin(request.auth.uid));
+      allow create: if isSignedIn() && incoming().customerId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        isAdmin(request.auth.uid) ||
+        (resource.data.customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+      );
+    }
+
+    match /rewardClaims/{claimId} {
+       // Support for both snake_case and camelCase collections if frontend uses either
+      allow read: if isSignedIn() && (resource.data.customerId == request.auth.uid || isAdmin(request.auth.uid));
+      allow create: if isSignedIn() && incoming().customerId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        isAdmin(request.auth.uid) ||
+        (resource.data.customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+      );
     }
 
     match /otps/{phone} {

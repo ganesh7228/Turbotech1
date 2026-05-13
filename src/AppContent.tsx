@@ -14,12 +14,16 @@ import AdminCustomers from './views/Admin/Customers';
 import AdminEarnings from './views/Admin/Earnings';
 import AdminHistory from './views/Admin/History';
 import AdminRewards from './views/Admin/Rewards';
+import AdminOffers from './views/Admin/Offers';
 
 import TechJobs from './views/Technician/Assigned';
 import TechMap from './views/Technician/Map';
 import TechHistory from './views/Technician/History';
+import { TechnicianNotificationListener } from './components/TechnicianNotificationListener';
+import { CustomerNotificationListener } from './components/CustomerNotificationListener';
+import ChatBot from './components/ChatBot';
 
-import { Home, ListTodo, Zap, Gift, User as UserIcon, LayoutDashboard, Users, IndianRupee, History, Briefcase, Map as MapIcon } from 'lucide-react';
+import { Home, ListTodo, Zap, Gift, User as UserIcon, LayoutDashboard, Users, IndianRupee, History, Briefcase, Map as MapIcon, Tag } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function AppContent() {
@@ -31,9 +35,13 @@ export default function AppContent() {
 
   const isAdmin = user?.role === 'admin';
   const isTech = user?.role === 'technician' || user?.role === 'admin';
+  const showTechNav = location.pathname.startsWith('/tech');
 
   return (
     <div className="flex flex-col h-screen bg-[#F8F9FB] overflow-hidden text-gray-900">
+      <ChatBot />
+      {isTech && <TechnicianNotificationListener />}
+      {user?.role === 'customer' && <CustomerNotificationListener />}
       <main className="flex-1 overflow-y-auto">
         <AnimatePresence mode="wait">
           <Routes location={location}>
@@ -53,6 +61,7 @@ export default function AppContent() {
               <>
                 <Route path="/admin" element={<AdminBookings />} />
                 <Route path="/admin/rewards" element={<AdminRewards />} />
+                <Route path="/admin/offers" element={<AdminOffers />} />
                 <Route path="/admin/customers" element={<AdminCustomers />} />
                 <Route path="/admin/earnings" element={<AdminEarnings />} />
                 <Route path="/admin/history" element={<AdminHistory />} />
@@ -88,7 +97,7 @@ export default function AppContent() {
         {!location.pathname.startsWith('/admin') && !location.pathname.startsWith('/tech') && (
           <nav className="h-16 flex items-center justify-around relative max-w-md mx-auto">
             <NavButton icon={<Home size={20} />} label="Home" active={location.pathname === '/'} onClick={() => navigate('/')} />
-            <NavButton icon={<ListTodo size={20} />} label="My Booking" active={location.pathname === '/booking'} onClick={() => navigate('/booking')} />
+            <NavButton icon={<ListTodo size={20} />} label="My Orders" active={location.pathname === '/booking'} onClick={() => navigate('/booking')} />
             
             <div className="relative -top-3.5 px-2 text-center flex flex-col items-center">
                <motion.button 
@@ -112,6 +121,7 @@ export default function AppContent() {
         {location.pathname.startsWith('/admin') && (
           <nav className="h-16 flex items-center justify-around">
             <NavButton icon={<Briefcase size={20} />} label="Bookings" active={location.pathname === '/admin'} onClick={() => navigate('/admin')} />
+            <NavButton icon={<Tag size={20} />} label="Offers" active={location.pathname === '/admin/offers'} onClick={() => navigate('/admin/offers')} />
             <NavButton icon={<Gift size={20} />} label="Rewards" active={location.pathname === '/admin/rewards'} onClick={() => navigate('/admin/rewards')} />
             <NavButton icon={<Users size={20} />} label="Customers" active={location.pathname === '/admin/customers'} onClick={() => navigate('/admin/customers')} />
             <NavButton icon={<IndianRupee size={20} />} label="Earnings" active={location.pathname === '/admin/earnings'} onClick={() => navigate('/admin/earnings')} />

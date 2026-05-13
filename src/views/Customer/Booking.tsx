@@ -5,7 +5,7 @@ import L from 'leaflet';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../../contexts/AuthContext';
 import { db, auth } from '../../lib/firebase';
-import { collection, addDoc, query, where, getDocs, limit } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs, limit, getDoc, doc } from 'firebase/firestore';
 import axios from 'axios';
 import { 
   MapPin, 
@@ -156,16 +156,22 @@ export default function BookingView() {
     }
   }, [position]);
 
+  const [isLocating, setIsLocating] = useState(false);
+
   const useCurrentLocation = () => {
+    setIsLocating(true);
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition((pos) => {
         const { latitude, longitude } = pos.coords;
         setPosition([latitude, longitude]);
+        setIsLocating(false);
       }, (err) => {
         setError("Location access denied or unavailable.");
+        setIsLocating(false);
       });
     } else {
       setError("Geolocation is not supported by your browser.");
+      setIsLocating(false);
     }
   };
 
@@ -185,6 +191,18 @@ export default function BookingView() {
   };
 
   const processBooking = async (customerId: string, firstOrder: boolean) => {
+    // Check if auto-apply for first order is enabled globally
+    let finalOffer = firstOrder ? 'First Booking Gift' : null;
+    try {
+      const settingsSnap = await getDoc(doc(db, 'settings', 'offers'));
+      const autoApplyGlobal = settingsSnap.exists() ? settingsSnap.data().autoApplyFirstOrder : false;
+      if (firstOrder && !autoApplyGlobal) {
+        finalOffer = null; // Don't auto-apply if globally disabled
+      }
+    } catch (e) {
+      console.warn("Failed to fetch offer settings, defaulting to current logic");
+    }
+
     const bookingData = {
       customerId: customerId,
       customerName: form.name,
@@ -195,6 +213,7 @@ export default function BookingView() {
       timeSlot: isQuick ? 'ASAP' : form.timeSlot,
       location: { lat: position![0], lng: position![1] },
       status: 'pending_callback',
+      serviceOTP: Math.floor(1000 + Math.random() * 9000).toString(),
       statusHistory: [{
         status: 'pending_callback',
         timestamp: new Date().toISOString()
@@ -206,7 +225,7 @@ export default function BookingView() {
       distance,
       eta,
       isFirstOrder: firstOrder,
-      appliedOffer: firstOrder ? 'First Booking Gift' : null,
+      appliedOffer: finalOffer,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -409,9 +428,11 @@ export default function BookingView() {
                 <button 
                   type="button" 
                   onClick={useCurrentLocation}
-                  className="bg-[#2F70E9] text-white px-4 py-2 rounded-full text-[10px] font-black flex items-center gap-1.5 shadow-md shadow-blue-100/50 active:scale-95 transition-all uppercase tracking-tighter"
+                  disabled={isLocating}
+                  className="bg-[#2F70E9] text-white px-4 py-2 rounded-full text-[10px] font-black flex items-center gap-1.5 shadow-md shadow-blue-100/50 active:scale-95 transition-all uppercase tracking-tighter disabled:opacity-70"
                 >
-                  <Navigation size={12} fill="white" className="rotate-45" /> Use My GPS
+                  <Navigation size={12} fill="white" className="rotate-45" /> 
+                  {isLocating ? 'Collecting your location...' : 'Use My Location'}
                 </button>
               </div>
               <div className="h-48 rounded-[24px] overflow-hidden border border-gray-100 relative shadow-inner z-0">
@@ -420,11 +441,23 @@ export default function BookingView() {
                   zoom={14} 
                   style={{ height: '100%', width: '100%' }}
                   zoomControl={false}
+                  dragging={!L.Browser.mobile}
+                  tap={!L.Browser.mobile}
                 >
                   <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                   <LocationPicker position={position} setPosition={setPosition} />
                   <MapUpdater position={position} />
                 </MapContainer>
+                {/* Two finger overlay for mobile */}
+                <div className="absolute inset-x-0 bottom-2 flex justify-center pointer-events-none z-[1000]">
+                  <div className="bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 flex items-center gap-2">
+                    <div className="flex -space-x-1">
+                      <div className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0s' }} />
+                      <div className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                    </div>
+                    <span className="text-[8px] font-black text-white uppercase tracking-widest">Use two fingers to move</span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -497,7 +530,8 @@ export default function BookingView() {
                       <div className="w-11 h-11 bg-white rounded-2xl shadow-sm border border-gray-50 flex items-center justify-center text-[#2F70E9]">
                         <Camera size={22} strokeWidth={2.5} />
                       </div>
-                      <span className="text-[11px] font-black text-[#2F70E9] uppercase tracking-tighter">Snap your house</span>
+                      <span className="text-[11px] font-black text-[#2F70E9] uppercase tracking-tighter">Open Camera</span>
+                      <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest mt-1">Direct capture only</p>
                     </>
                   )}
                 </motion.div>

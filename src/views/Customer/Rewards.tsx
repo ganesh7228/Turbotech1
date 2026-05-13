@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../lib/firebase';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, updateDoc, doc, increment } from 'firebase/firestore';
 import { Reward } from '../../types';
-import { Gift, ChevronLeft, Image as ImageIcon } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { motion, AnimatePresence } from 'motion/react';
+import { ChevronLeft, Gift, Image as ImageIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'motion/react';
 
 export default function RewardsView() {
+  const { user } = useAuth();
+  const { points: turboPoints, badge: userBadge } = user || { points: 0, badge: 'Silver' };
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
@@ -18,6 +21,37 @@ export default function RewardsView() {
       setLoading(false);
     });
   }, []);
+
+  const handleClaim = async (reward: Reward) => {
+    if ((turboPoints || 0) < reward.pointsRequired) {
+      alert(`You need ${reward.pointsRequired - (turboPoints || 0)} more points to claim this!`);
+      return;
+    }
+
+    try {
+      // 1. Create claim request
+      await addDoc(collection(db, 'rewardClaims'), {
+        customerId: user?.id,
+        rewardId: reward.id,
+        rewardTitle: reward.title,
+        rewardPoints: reward.pointsRequired,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        updatedAt: serverTimestamp()
+      });
+
+      // 2. Deduct points
+      await updateDoc(doc(db, 'users', user!.id), {
+        points: increment(-reward.pointsRequired)
+      });
+
+      alert('Reward claimed successfully! Go to My Orders -> Rewards to track delivery.');
+      navigate('/booking'); // Redirect to My Orders
+    } catch (e) {
+      console.error(e);
+      alert('Failed to claim reward. Please try again.');
+    }
+  };
 
   return (
     <div className="p-6 pb-28 bg-[#F8F9FB] min-h-screen max-w-xl mx-auto">
@@ -37,7 +71,7 @@ export default function RewardsView() {
         </div>
       </header>
 
-      {/* Points Balance Card - New Premium Look */}
+      {/* Points Balance Card */}
       <motion.div 
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
@@ -47,11 +81,11 @@ export default function RewardsView() {
         <div className="relative z-10 flex flex-col items-center text-center">
            <p className="text-white/70 text-[9px] font-black uppercase tracking-[2px] mb-1.5 font-mono">My Balance</p>
            <h2 className="text-4xl font-black text-white font-display mb-0.5 flex items-baseline gap-1.5">
-             1240 <span className="text-[14px] text-white/50">PTS</span>
+             {turboPoints} <span className="text-[14px] text-white/50">PTS</span>
            </h2>
            <div className="flex items-center gap-1.5 px-3 py-1 bg-white/15 backdrop-blur-md rounded-full mt-3 border border-white/10">
               <div className="w-1 h-1 bg-green-400 rounded-full animate-pulse" />
-              <span className="text-[8px] font-black text-white uppercase tracking-widest leading-none">Silver Elite Tier</span>
+              <span className="text-[8px] font-black text-white uppercase tracking-widest leading-none">{userBadge} Tier</span>
            </div>
         </div>
       </motion.div>
@@ -76,6 +110,9 @@ export default function RewardsView() {
               className="bg-white rounded-[28px] p-4 shadow-[0_6px_20px_rgba(0,0,0,0.02)] border border-gray-50 flex flex-col group relative overflow-hidden"
             >
                <div className="aspect-square rounded-[20px] bg-[#F8F9FB] mb-3 overflow-hidden flex items-center justify-center relative border border-gray-50">
+                  <div className="absolute top-2 right-2 bg-white/80 backdrop-blur-sm px-2 py-0.5 rounded-lg text-[8px] font-black text-orange-500 border border-orange-100 z-10">
+                    {reward.pointsRequired} PTS
+                  </div>
                   {reward.imageUrl ? (
                     <img src={reward.imageUrl} alt={reward.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                   ) : (
@@ -83,14 +120,15 @@ export default function RewardsView() {
                   )}
                </div>
                <h3 className="font-black text-gray-900 text-[13px] mb-1 font-display line-clamp-1">{reward.title}</h3>
-               <p className="text-[9px] font-bold text-gray-400 line-clamp-2 leading-tight uppercase tracking-tight">{reward.description}</p>
+               <p className="text-[9px] font-bold text-gray-400 line-clamp-2 leading-tight uppercase tracking-tight mb-3">Requires {reward.pointsRequired} Points</p>
                
-               <div className="mt-3 pt-3 border-t border-gray-50 flex justify-between items-center">
-                  <span className="text-[8px] font-black text-[#2F70E9] uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded-lg">CLAIM</span>
-                  <div className="w-6 h-6 bg-[#F8F9FB] rounded-full flex items-center justify-center text-gray-200 border border-gray-50">
-                    <Gift size={12} />
-                  </div>
-               </div>
+               <button 
+                disabled={(turboPoints || 0) < reward.pointsRequired}
+                onClick={() => handleClaim(reward)}
+                className={`mt-auto w-full py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${(turboPoints || 0) >= reward.pointsRequired ? 'bg-[#2F70E9] text-white shadow-lg shadow-blue-100' : 'bg-gray-100 text-gray-300'}`}
+               >
+                 {(turboPoints || 0) >= reward.pointsRequired ? 'CLAIM NOW' : `NEED ${reward.pointsRequired - (turboPoints || 0)} MORE`}
+               </button>
             </motion.div>
           ))}
 

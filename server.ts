@@ -22,7 +22,7 @@ let firebaseConfig: any = {};
 try {
   if (fs.existsSync(configPath)) {
     firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    console.log("[FIREBASE] Config loaded. Target Project:", firebaseConfig.projectId);
+    console.log("[FIREBASE] Config loaded. Proj:", firebaseConfig.projectId, "DB:", firebaseConfig.firestoreDatabaseId);
   }
 } catch (e) {
   console.error("[FIREBASE] Read config error:", e);
@@ -30,86 +30,96 @@ try {
 
 const configProjectId = firebaseConfig.projectId;
 const databaseId = firebaseConfig.firestoreDatabaseId;
+const envProjId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT;
+
+logger.info(`Environment Check - Env Proj: ${envProjId}, Config Proj: ${configProjectId}`);
 
 let adminApp: any;
 try {
   if (getApps().length === 0) {
-    adminApp = initializeApp({
-      credential: applicationDefault()
-    });
-    console.log("[FIREBASE] Admin App initialized via applicationDefault.");
+    // Pure ambient initialization - best for Cloud Run/AI Studio if identity is injected
+    adminApp = initializeApp();
+    logger.info(`Admin App initialized (Pure Ambient). Project: ${adminApp.options.projectId || 'inferred'}`);
   } else {
     adminApp = getApps()[0];
   }
 } catch (e: any) {
-  console.warn("[FIREBASE] Ambient initialization failed:", e.message);
+  logger.warn(`Pure ambient init failed: ${e.message}. Trying with config.`);
   try {
-    adminApp = initializeApp({
-      projectId: configProjectId || process.env.GOOGLE_CLOUD_PROJECT,
-      credential: applicationDefault()
-    });
-    console.log("[FIREBASE] Admin App initialized with Project ID override.");
+     adminApp = initializeApp({
+       credential: applicationDefault(),
+       projectId: configProjectId || envProjId
+     }, "fallback-admin");
   } catch (e2: any) {
-    console.error("[FIREBASE] Fatal initialization error:", e2.message);
-    adminApp = getApps()[0];
+     logger.error(`ALL admin app initializations failed: ${e2.message}`);
+     adminApp = getApps()[0];
   }
 }
 
-// Diagnostic: Log current environment project
-const effectiveProjectId = adminApp.options.projectId || process.env.GOOGLE_CLOUD_PROJECT || "unknown";
-console.log(`[FIREBASE] Effective Project ID for operations: ${effectiveProjectId}`);
+const effectiveProjectId = adminApp?.options?.projectId || envProjId || "unknown";
+const projectId = effectiveProjectId; 
 
-let db: any;
+let db: Firestore;
 let signBlobAvailable = true;
 
 const initFirestore = async () => {
   const dbName = databaseId && databaseId !== "(default)" ? databaseId : undefined;
   
+  // Set default immediately
+  db = getFirestore(adminApp, dbName);
+  (global as any).effectiveProjectId = adminApp.options.projectId || envProjId;
+  (global as any).effectiveDatabaseId = dbName || '(default)';
+  (global as any).authAdmin = getAuth(adminApp);
+
   const strategies = [
-    { name: "Named Database (Config)", id: dbName },
-    { name: "Default Database", id: undefined },
-    { name: "(default) string", id: "(default)" }
+    { name: "Config (Explicit)", proj: configProjectId, db: dbName },
+    { name: "Ambient (Current)", app: adminApp, db: dbName },
+    { name: "Default (Fallback)", app: undefined, proj: undefined, db: undefined },
   ];
 
-  let lastError = null;
   for (const strategy of strategies) {
     try {
-      console.log(`[FIREBASE] Strategy: ${strategy.name} on Project: ${effectiveProjectId}`);
-      const tempDb = getFirestore(adminApp, strategy.id);
+      let appToUse = (strategy as any).app;
+      if (!appToUse) {
+        const appName = `strategy-${strategy.name.toLowerCase().replace(/[^a-z]/g, '-')}`;
+        const existing = getApps().find(a => a.name === appName);
+        if (existing) {
+          appToUse = existing;
+        } else {
+          appToUse = initializeApp({
+            credential: applicationDefault(),
+            projectId: strategy.proj
+          }, appName);
+        }
+      }
       
-      // Test write
-      await tempDb.collection("test").doc("connection").set({ 
+      const tempDb = getFirestore(appToUse, strategy.db);
+      
+      // Test write with 2s timeout
+      const testPromise = tempDb.collection("test").doc("connection").set({ 
         lastSeen: new Date().toISOString(),
-        status: "active",
         strategy: strategy.name,
-        projectId: effectiveProjectId
+        projectId: appToUse.options.projectId || 'ambient',
+        databaseId: strategy.db || '(default)'
       }, { merge: true });
+
+      await Promise.race([testPromise, new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 2000))]);
       
       db = tempDb;
-      console.log(`[FIREBASE] SUCCESS: Connection active via ${strategy.name}`);
+      (global as any).effectiveProjectId = appToUse.options.projectId;
+      (global as any).effectiveDatabaseId = strategy.db || '(default)';
+      (global as any).authAdmin = getAuth(appToUse);
+      
+      logger.info(`Firestore connected via ${strategy.name}`);
       return;
     } catch (err: any) {
-      console.warn(`[FIREBASE] Strategy ${strategy.name} FAILED:`, err.message);
-      lastError = err;
+      logger.warn(`Strategy ${strategy.name} failed: ${err.message}`);
     }
-  }
-
-  console.error("[FIREBASE] CRITICAL: All Firestore strategies failed. Using fallback instance.");
-  db = getFirestore(adminApp, dbName);
-  
-  if (lastError && (lastError.message.includes("permission") || lastError.message.includes("7"))) {
-    console.warn("================================================================================");
-    console.warn("FIREBASE PERMISSION ERROR DETECTED");
-    console.warn("Possible causes:");
-    console.warn("1. Service account does not have roles/datastore.user on project", effectiveProjectId);
-    console.warn("2. The Project ID in firebase-applet-config.json is incorrect.");
-    console.warn("3. If using a custom project, ensure a Service Account Key JSON is provided.");
-    console.warn("================================================================================");
   }
 };
 
 
-const authAdmin = getAuth(adminApp);
+const getAuthAdmin = () => (global as any).authAdmin || getAuth(adminApp);
 const JWT_SECRET = process.env.JWT_SECRET || "nanjangud-service-pro-secret-123";
 
 const app = express();
@@ -129,6 +139,46 @@ const normalizePhone = (phone: string) => {
   // Keep only digits
   return phone.replace(/\D/g, "").slice(-10);
 };
+
+const logs: string[] = [];
+const logger = {
+  info: (...args: any[]) => {
+    const msg = `[INFO] ${args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ')}`;
+    console.log(msg);
+    logs.push(`${new Date().toISOString()} ${msg}`);
+    if (logs.length > 100) logs.shift();
+  },
+  warn: (...args: any[]) => {
+    const msg = `[WARN] ${args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ')}`;
+    console.warn(msg);
+    logs.push(`${new Date().toISOString()} ${msg}`);
+    if (logs.length > 100) logs.shift();
+  },
+  error: (...args: any[]) => {
+    const msg = `[ERROR] ${args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ')}`;
+    console.error(msg);
+    logs.push(`${new Date().toISOString()} ${msg}`);
+    if (logs.length > 100) logs.shift();
+  }
+};
+
+app.get("/api/logs", (req, res) => {
+  res.json(logs);
+});
+
+app.get("/api/server-info", (req, res) => {
+  res.json({
+    status: "ok",
+    firestore: {
+      projectId: (global as any).effectiveProjectId || configProjectId || process.env.GOOGLE_CLOUD_PROJECT,
+      databaseId: db?.databaseId || (global as any).effectiveDatabaseId || 'unknown',
+      env: {
+        GOOGLE_CLOUD_PROJECT: process.env.GOOGLE_CLOUD_PROJECT,
+        GCP_PROJECT: process.env.GCP_PROJECT
+      }
+    }
+  });
+});
 
 app.post("/api/send-otp", async (req, res) => {
   const { phone: rawPhone } = req.body;
@@ -265,7 +315,7 @@ app.post("/api/verify-otp", async (req, res) => {
     if (signBlobAvailable) {
       try {
         // Add custom claims for easier rule checks
-        firebaseToken = await authAdmin.createCustomToken(userData.id, { 
+        firebaseToken = await getAuthAdmin().createCustomToken(userData.id, { 
           phone: phone,
           role: userData.role 
         });
@@ -341,7 +391,7 @@ app.get("/api/me", async (req, res) => {
     let firebaseToken = "";
     if (signBlobAvailable) {
       try {
-        firebaseToken = await authAdmin.createCustomToken(decoded.id, {
+        firebaseToken = await getAuthAdmin().createCustomToken(decoded.id, {
           phone: decoded.phone,
           role: decoded.role
         });
@@ -387,27 +437,31 @@ app.post("/api/bookings", async (req, res) => {
   const token = req.cookies.session;
   if (!token) return res.status(401).json({ error: "Not authenticated" });
 
+  const currentProjectId = (global as any).effectiveProjectId || configProjectId || process.env.GOOGLE_CLOUD_PROJECT;
+  const currentDbId = db?.databaseId || (global as any).effectiveDatabaseId || 'unknown';
+
   try {
     const decoded: any = jwt.verify(token, JWT_SECRET);
     const bookingData = {
       ...req.body,
-      customerId: decoded.id, // Force correct customer ID
-      phone: decoded.phone || normalizePhone(req.body.phone), // Ensure phone is set from token if possible
+      customerId: decoded.id, 
+      phone: decoded.phone || normalizePhone(req.body.phone), 
       updatedAt: new Date().toISOString(),
       createdAt: req.body.createdAt || new Date().toISOString(),
     };
 
-    console.log(`[BOOKING] Attempting creation for user ${decoded.phone} via Admin API (DB: ${db.databaseId || 'default'})...`);
+    logger.info(`Creating booking for ${decoded.phone} (Proj: ${currentProjectId}, DB: ${currentDbId})`);
     const docRef = await db.collection("bookings").add(bookingData);
-    console.log(`[BOOKING] Success: ${docRef.id}`);
+    logger.info(`Booking success: ${docRef.id}`);
     res.json({ success: true, id: docRef.id });
   } catch (error: any) {
-    console.error(`[BOOKING] Error creating booking via API for ${normalizePhone(req.body.phone)}:`, error);
-    const isPermissionError = error.message && (error.message.includes("permission") || error.message.includes("7"));
-    const details = isPermissionError 
-      ? `Server lacks sufficient Firestore permissions. Tried DB: ${db.databaseId || 'default'}. Project: ${projectId}.` 
-      : error.message;
-    res.status(500).json({ error: "Failed to create booking", details });
+    logger.error(`Booking error for ${req.body.phone}: ${error.message}`);
+    res.status(500).json({ 
+      error: "Failed to create booking", 
+      details: error.message,
+      projectId: currentProjectId,
+      databaseId: currentDbId
+    });
   }
 });
 
@@ -415,23 +469,34 @@ app.get("/api/bookings", async (req, res) => {
   const token = req.cookies.session;
   if (!token) return res.status(401).json({ error: "Not authenticated" });
 
-  try {
-    const decoded: any = jwt.verify(token, JWT_SECRET);
-    let query = db.collection("bookings").where("phone", "==", decoded.phone);
-    
-    // Admin can see everything if they don't have a phone filter, but here we prioritize user's own
-    if (decoded.role === 'admin' && req.query.all === 'true') {
-      query = db.collection("bookings");
-    }
+    try {
+      const decoded: any = jwt.verify(token, JWT_SECRET);
+      let query = db.collection("bookings");
+      
+      if (decoded.role === 'customer') {
+        query = query.where("customerId", "==", decoded.id);
+      } else if (decoded.role === 'technician') {
+        query = query.where("technicianId", "==", decoded.id);
+      } else if (decoded.role === 'admin' && req.query.all !== 'true') {
+        // Admin default view could be everything or filtered
+        if (decoded.phone) {
+           query = query.where("phone", "==", decoded.phone);
+        }
+      }
 
-    const snapshot = await query.orderBy("createdAt", "desc").get();
-    const bookings = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
-    res.json(bookings);
-  } catch (error) {
-    console.error("Error fetching bookings via API:", error);
-    res.status(500).json({ error: "Failed to fetch bookings" });
-  }
-});
+      const snapshot = await query.orderBy("createdAt", "desc").get();
+      const bookings = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+      res.json(bookings);
+    } catch (error: any) {
+      console.error("Error fetching bookings via API:", error);
+      res.status(500).json({ 
+        error: "Failed to fetch bookings", 
+        details: error.message,
+        projectId: effectiveProjectId,
+        databaseId: db?.databaseId || 'unknown'
+      });
+    }
+  });
 
 app.get("/api/bookings/:id", async (req, res) => {
   const token = req.cookies.session;
@@ -450,8 +515,11 @@ app.get("/api/bookings/:id", async (req, res) => {
     }
 
     res.json({ id: doc.id, ...data });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch booking" });
+  } catch (error: any) {
+    res.status(500).json({ 
+      error: "Failed to fetch booking", 
+      details: error.message 
+    });
   }
 });
 
@@ -477,16 +545,49 @@ app.patch("/api/bookings/:id", async (req, res) => {
     });
 
     res.json({ success: true });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error updating booking via API:", error);
-    res.status(500).json({ error: "Failed to update booking" });
+    res.status(500).json({ 
+      error: "Failed to update booking", 
+      details: error.message 
+    });
   }
 });
 
 const PORT = 3000;
 
+// Chat Bot API
+app.post("/api/chat", express.json(), async (req, res) => {
+  const { message, phone, name, history } = req.body;
+  const botToken = process.env.TELEGRAM_TOKEN;
+  const adminChatId = process.env.CHAT_ID;
+
+  if (!botToken || !adminChatId) {
+    return res.status(500).json({ error: "Chatbot not configured" });
+  }
+
+  try {
+    const text = `🤖 *New Chat Message*\n👤 *User:* ${name || 'Unknown'}\n📞 *Phone:* ${phone}\n💬 *Message:* ${message}`;
+    
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: adminChatId,
+        text,
+        parse_mode: 'Markdown'
+      })
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to send message" });
+  }
+});
+
 async function startServer() {
-  await initFirestore();
+  initFirestore().catch(e => logger.error("Background Firestore init error:", e));
   
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

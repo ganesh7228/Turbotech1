@@ -28,8 +28,17 @@ import {
   Smartphone,
   ChevronRight,
   Bike,
-  ChevronDown
+  ChevronDown,
+  MessageSquare,
+  Package,
+  Gift as GiftIcon,
+  ShieldCheck,
+  ExternalLink,
+  Target,
+  Star,
+  Send
 } from 'lucide-react';
+import { addDoc } from 'firebase/firestore';
 import { MapContainer, TileLayer, Marker } from 'react-leaflet';
 import L from 'leaflet';
 
@@ -64,11 +73,41 @@ function getDistance(p1: {lat: number, lng: number}, p2: {lat: number, lng: numb
 export default function MyBookings() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<'services' | 'products' | 'rewards'>('services');
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
   const [showFullStatus, setShowFullStatus] = useState(false);
   const [dynamicEta, setDynamicEta] = useState<string | null>(null);
+
+  const [showReview, setShowReview] = useState(false);
+  const [reviewData, setReviewData] = useState({
+    techRating: 0,
+    techFeedback: '',
+    appRating: 0,
+    appSuggestions: ''
+  });
+
+  const submitReview = async () => {
+    if (!selectedBooking) return;
+    try {
+      await addDoc(collection(db, 'reviews'), {
+        bookingId: selectedBooking.id,
+        customerId: user?.id,
+        technicianId: selectedBooking.technicianId,
+        ...reviewData,
+        createdAt: new Date().toISOString()
+      });
+      await updateDoc(doc(db, 'bookings', selectedBooking.id), {
+        reviewed: true
+      });
+      setShowReview(false);
+      alert('Thank you for your feedback!');
+    } catch (e) {
+      console.error(e);
+      alert('Failed to submit review.');
+    }
+  };
 
   useEffect(() => {
     if (selectedBooking?.techLocation && selectedBooking?.location && selectedBooking.status === 'on_the_way') {
@@ -81,21 +120,21 @@ export default function MyBookings() {
   }, [selectedBooking?.techLocation, selectedBooking?.location, selectedBooking?.status]);
 
   useEffect(() => {
-    if (!user?.phone) {
+    if (!user?.id) {
         setLoading(false);
         return;
     }
 
-    let unsubscribe: () => void = () => {};
+    let unsubscribeLocal: () => void = () => {};
 
     const startListener = () => {
       const q = query(
         collection(db, 'bookings'),
-        where('phone', '==', user.phone),
+        where('customerId', '==', user.id),
         orderBy('createdAt', 'desc')
       );
 
-      unsubscribe = onSnapshot(q, (snapshot) => {
+      unsubscribeLocal = onSnapshot(q, (snapshot) => {
         const updatedBookings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Booking));
         setBookings(updatedBookings);
         
@@ -106,7 +145,7 @@ export default function MyBookings() {
         
         setLoading(false);
       }, (error) => {
-        console.warn("Real-time bookings failed (likely auth), trying API fallback:", error.message);
+        console.warn("Real-time bookings failed, trying API fallback:", error.message);
         fetchViaApi();
       });
     };
@@ -119,23 +158,21 @@ export default function MyBookings() {
           const updated = data.find((b: any) => b.id === selectedBooking.id);
           if (updated) setSelectedBooking(updated);
         }
-      } catch (apiErr) {
-        console.error("Booking fetch failed via both methods:", apiErr);
+      } catch (apiErr: any) {
+        console.error("Booking fetch failed via both methods:", apiErr.message || apiErr);
       } finally {
         setLoading(false);
       }
     };
 
-    // Only start listener if Firebase Auth is ready and user is authenticated on frontend
-    if (auth.currentUser) {
+    if (auth.currentUser || user) {
       startListener();
     } else {
-      console.log("[MyBookings] Firebase Auth not ready on frontend, using API directly");
       fetchViaApi();
     }
 
-    return () => unsubscribe();
-  }, [user, selectedBooking?.id]);
+    return () => unsubscribeLocal();
+  }, [user?.id, selectedBooking?.id]);
 
   const handleCancel = async (id: string) => {
     if (window.confirm('Are you sure you want to cancel this booking?')) {
@@ -205,6 +242,94 @@ export default function MyBookings() {
 
   return (
     <div className="bg-[#F8F9FB] min-h-screen">
+      <AnimatePresence>
+        {selectedBooking && selectedBooking.status === 'completed' && !selectedBooking.reviewed && !showReview && (
+          <motion.div 
+            initial={{ opacity: 0, y: 100 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="fixed bottom-24 left-6 right-6 z-[60] bg-[#2F70E9] p-6 rounded-[32px] text-white shadow-2xl shadow-blue-200/50 flex items-center justify-between"
+          >
+            <div>
+              <h4 className="font-black text-sm tracking-tight">Service Completed!</h4>
+              <p className="text-[10px] font-bold text-white/70">Share your feedback to earn 10 points</p>
+            </div>
+            <button 
+              onClick={() => setShowReview(true)}
+              className="bg-white text-[#2F70E9] px-6 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
+            >
+              Rate Now
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Review Modal */}
+      <AnimatePresence>
+        {showReview && (
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowReview(false)} className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" />
+            <motion.div 
+              initial={{ y: '100%' }} 
+              animate={{ y: 0 }} 
+              exit={{ y: '100%' }} 
+              className="bg-white w-full max-w-lg rounded-t-[40px] sm:rounded-[40px] shadow-2xl relative z-10 p-8 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <h3 className="text-2xl font-black text-gray-900 tracking-tight">Your Feedback</h3>
+                <button onClick={() => setShowReview(false)} className="w-10 h-10 bg-gray-50 rounded-full flex items-center justify-center text-gray-400">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-10">
+                {/* Tech Review */}
+                <section>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-4 underline decoration-[#2F70E9] decoration-2 underline-offset-4">Technician Review</label>
+                  <div className="flex gap-2 mb-4">
+                    {[1,2,3,4,5].map(star => (
+                      <button key={star} onClick={() => setReviewData({...reviewData, techRating: star})} className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${reviewData.techRating >= star ? 'bg-amber-400 text-white shadow-lg shadow-amber-100' : 'bg-gray-50 text-gray-200'}`}>
+                        <Star size={24} fill={reviewData.techRating >= star ? 'currentColor' : 'none'} />
+                      </button>
+                    ))}
+                  </div>
+                  <textarea 
+                    placeholder="Tell us about the technician's professionalism..."
+                    value={reviewData.techFeedback}
+                    onChange={e => setReviewData({...reviewData, techFeedback: e.target.value})}
+                    className="w-full bg-gray-50 border-none rounded-3xl p-6 text-sm font-bold min-h-[100px] outline-none focus:ring-4 focus:ring-blue-100 transition-all"
+                  />
+                </section>
+
+                {/* App Review */}
+                <section>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-4 underline decoration-[#2F70E9] decoration-2 underline-offset-4">App Ease of Use</label>
+                  <div className="flex gap-2 mb-4">
+                    {[1,2,3,4,5].map(star => (
+                      <button key={star} onClick={() => setReviewData({...reviewData, appRating: star})} className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${reviewData.appRating >= star ? 'bg-blue-500 text-white shadow-lg shadow-blue-100' : 'bg-gray-50 text-gray-200'}`}>
+                        <Star size={24} fill={reviewData.appRating >= star ? 'currentColor' : 'none'} />
+                      </button>
+                    ))}
+                  </div>
+                  <textarea 
+                    placeholder="Any suggestions for our platform?"
+                    value={reviewData.appSuggestions}
+                    onChange={e => setReviewData({...reviewData, appSuggestions: e.target.value})}
+                    className="w-full bg-gray-50 border-none rounded-3xl p-6 text-sm font-bold min-h-[100px] outline-none focus:ring-4 focus:ring-blue-100 transition-all"
+                  />
+                </section>
+
+                <button 
+                  onClick={submitReview}
+                  disabled={!reviewData.techRating || !reviewData.appRating}
+                  className="w-full py-5 bg-[#2F70E9] text-white rounded-[28px] font-black text-sm uppercase tracking-widest shadow-xl shadow-blue-100 flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50"
+                >
+                  <Send size={18} /> Submit Review
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <AnimatePresence mode="wait">
         {!selectedBooking ? (
           <motion.div 
@@ -214,76 +339,111 @@ export default function MyBookings() {
             exit={{ opacity: 0, x: -20 }}
             className="p-6 pb-28 max-w-xl mx-auto"
           >
-            <header className="flex justify-between items-start mb-8">
-              <div>
-                <h1 className="text-3xl font-black text-gray-900 tracking-tight leading-tight font-display">My Bookings</h1>
-                <div className="flex items-center gap-2 mt-2">
-                  <div className="w-1 h-1 bg-[#2F70E9] rounded-full animate-pulse" />
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none">Live updates active</p>
-                </div>
-              </div>
-              <div className="bg-white w-12 h-12 rounded-2xl border border-gray-100 shadow-sm flex flex-col items-center justify-center">
-                <span className="text-lg font-black text-[#2F70E9] leading-none">{bookings.length}</span>
-                <span className="text-[7px] font-black text-gray-300 uppercase tracking-widest mt-0.5">TOTAL</span>
+            <header className="mb-8 text-center sm:text-left">
+              <h1 className="text-3xl font-black text-gray-900 tracking-tight font-display mb-6">My Orders</h1>
+              
+              <div className="flex bg-white p-1.5 rounded-[24px] shadow-sm border border-gray-100">
+                <button 
+                  onClick={() => setActiveTab('services')}
+                  className={`flex-1 py-3 px-4 rounded-[18px] text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'services' ? 'bg-[#2F70E9] text-white shadow-lg shadow-blue-100' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                  <Bike size={14} /> Services
+                </button>
+                <button 
+                  onClick={() => setActiveTab('products')}
+                  className={`flex-1 py-3 px-4 rounded-[18px] text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'products' ? 'bg-[#2F70E9] text-white shadow-lg shadow-blue-100' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                  <Package size={14} /> Products
+                </button>
+                <button 
+                  onClick={() => setActiveTab('rewards')}
+                  className={`flex-1 py-3 px-4 rounded-[18px] text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${activeTab === 'rewards' ? 'bg-[#2F70E9] text-white shadow-lg shadow-blue-100' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                  <GiftIcon size={14} /> Rewards
+                </button>
               </div>
             </header>
 
-            <div className="space-y-5">
-              {bookings.length === 0 ? (
-                <div className="bg-white p-14 rounded-[48px] text-center border border-gray-50 shadow-sm mt-10">
-                   <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-8">
-                      <AlertCircle className="text-gray-200" size={48} />
-                   </div>
-                   <h3 className="font-black text-2xl text-gray-900 font-display">No active bookings</h3>
-                   <p className="text-sm font-bold text-gray-400 mt-3 max-w-[200px] mx-auto leading-relaxed">Book your first service and track it here in real-time.</p>
-                   <button 
-                    onClick={() => navigate('/')}
-                    className="mt-10 bg-[#2F70E9] text-white px-12 py-5 rounded-[28px] text-sm font-black shadow-xl shadow-blue-100/50 active:scale-95 transition-transform"
-                   >
-                     Book Service
-                   </button>
-                </div>
-              ) : (
-                bookings.map((booking) => (
-                  <motion.div
-                    key={booking.id}
-                    layoutId={`card-${booking.id}`}
-                    onClick={() => setSelectedBooking(booking)}
-                    whileTap={{ scale: 0.98 }}
-                    className="bg-white p-5 rounded-[28px] border border-gray-50 shadow-[0_8px_30px_rgba(0,0,0,0.02)] flex items-center justify-between cursor-pointer group hover:border-[#2F70E9]/20 transition-all font-display"
-                  >
-                    <div className="flex-1 min-w-0 pr-4">
-                      <div className="flex items-center gap-2.5 mb-2.5">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${
-                          booking.status === 'completed' ? 'bg-emerald-50 text-emerald-600' :
-                          booking.status === 'rejected' || booking.status === 'cancelled' ? 'bg-rose-50 text-rose-600' :
-                          'bg-blue-50 text-[#2F70E9]'
-                        }`}>
-                          {booking.status.replace('_', ' ')}
-                        </span>
-                        <div className="text-[9px] text-gray-300 font-mono font-black">
-                           #{booking.id.slice(-6).toUpperCase()}
+            {activeTab === 'services' && (
+              <div className="space-y-5">
+                {bookings.length === 0 ? (
+                  <div className="bg-white p-14 rounded-[48px] text-center border border-gray-50 shadow-sm mt-10">
+                     <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-8">
+                        <AlertCircle className="text-gray-200" size={48} />
+                     </div>
+                     <h3 className="font-black text-2xl text-gray-900 font-display">No active bookings</h3>
+                     <p className="text-sm font-bold text-gray-400 mt-3 max-w-[200px] mx-auto leading-relaxed">Book your first service and track it here in real-time.</p>
+                     <button 
+                      onClick={() => navigate('/')}
+                      className="mt-10 bg-[#2F70E9] text-white px-12 py-5 rounded-[28px] text-sm font-black shadow-xl shadow-blue-100/50 active:scale-95 transition-transform"
+                     >
+                       Book Service
+                     </button>
+                  </div>
+                ) : (
+                  bookings.map((booking) => (
+                    <motion.div
+                      key={booking.id}
+                      layoutId={`card-${booking.id}`}
+                      onClick={() => setSelectedBooking(booking)}
+                      whileTap={{ scale: 0.98 }}
+                      className="bg-white p-5 rounded-[28px] border border-gray-50 shadow-[0_8px_30px_rgba(0,0,0,0.02)] flex items-center justify-between cursor-pointer group hover:border-[#2F70E9]/20 transition-all font-display"
+                    >
+                      <div className="flex-1 min-w-0 pr-4">
+                        <div className="flex items-center gap-2.5 mb-2.5">
+                          <span className={`px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${
+                            booking.status === 'completed' ? 'bg-emerald-50 text-emerald-600' :
+                            booking.status === 'rejected' || booking.status === 'cancelled' ? 'bg-rose-50 text-rose-600' :
+                            'bg-blue-50 text-[#2F70E9]'
+                          }`}>
+                            {booking.status.replace('_', ' ')}
+                          </span>
+                          <div className="text-[9px] text-gray-300 font-mono font-black">
+                             #{booking.id.slice(-6).toUpperCase()}
+                          </div>
+                        </div>
+                        <h4 className="text-base font-black text-gray-900 truncate mb-1">
+                          {booking.problem}
+                        </h4>
+                        <div className="flex items-center gap-2.5">
+                           <div className="flex items-center gap-1 text-[10px] font-black text-gray-400">
+                              <Calendar size={10} className="text-[#2F70E9]" />
+                              {booking.createdAt ? new Date(booking.createdAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short' }) : 'N/A'}
+                           </div>
+                           <div className="w-1 h-1 bg-gray-100 rounded-full" />
+                           <p className="text-[10px] font-black text-[#2F70E9] uppercase tracking-tighter">Rs{booking.total}</p>
                         </div>
                       </div>
-                      <h4 className="text-base font-black text-gray-900 truncate mb-1">
-                        {booking.problem}
-                      </h4>
-                      <div className="flex items-center gap-2.5">
-                         <div className="flex items-center gap-1 text-[10px] font-black text-gray-400">
-                            <Calendar size={10} className="text-[#2F70E9]" />
-                            {booking.createdAt ? new Date(booking.createdAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short' }) : 'N/A'}
-                         </div>
-                         <div className="w-1 h-1 bg-gray-100 rounded-full" />
-                         <p className="text-[10px] font-black text-[#2F70E9] uppercase tracking-tighter">Rs{booking.total}</p>
+                      <div className="w-10 h-10 bg-[#F8F9FB] rounded-xl flex items-center justify-center text-gray-300 group-hover:bg-[#2F70E9] group-hover:text-white transition-all shadow-sm">
+                        <ChevronRight size={20} strokeWidth={3} />
                       </div>
-                    </div>
-                    <div className="w-10 h-10 bg-[#F8F9FB] rounded-xl flex items-center justify-center text-gray-300 group-hover:bg-[#2F70E9] group-hover:text-white transition-all shadow-sm">
-                      <ChevronRight size={20} strokeWidth={3} />
-                    </div>
-                  </motion.div>
-                ))
-              )}
-            </div>
+                    </motion.div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {activeTab === 'products' && (
+              <div className="bg-white p-14 rounded-[48px] text-center border border-gray-50 shadow-sm mt-10">
+                 <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-8">
+                    <Package className="text-[#2F70E9]" size={48} />
+                 </div>
+                 <h3 className="font-black text-2xl text-gray-900 font-display">Products Store</h3>
+                 <p className="text-sm font-bold text-gray-400 mt-3 max-w-[200px] mx-auto leading-relaxed">Coming soon – Tech gadgets delivery in 1–2 days</p>
+              </div>
+            )}
+
+            {activeTab === 'rewards' && (
+              <div className="space-y-5">
+                <div className="bg-white p-14 rounded-[48px] text-center border border-gray-50 shadow-sm mt-10">
+                   <div className="w-24 h-24 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-8">
+                      <GiftIcon className="text-amber-500" size={48} />
+                   </div>
+                   <h3 className="font-black text-2xl text-gray-900 font-display">Your Rewards</h3>
+                   <p className="text-sm font-bold text-gray-400 mt-3 max-w-[200px] mx-auto leading-relaxed">Claim gifts and track their delivery right here.</p>
+                </div>
+              </div>
+            )}
           </motion.div>
         ) : (
           <motion.div 
@@ -293,6 +453,57 @@ export default function MyBookings() {
             exit={{ opacity: 0, x: 20 }}
             className="p-6 pb-28 max-w-xl mx-auto"
           >
+            {/* Header with Back */}
+            <header className="flex items-center gap-4 mb-8">
+              <button onClick={() => setSelectedBooking(null)} className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-gray-100">
+                <ChevronLeft size={24} />
+              </button>
+              <h1 className="text-xl font-black text-gray-900 tracking-tight font-display">Order Details</h1>
+            </header>
+
+            {/* OTP Section IF technician assigned */}
+            {selectedBooking.technicianId && selectedBooking.serviceOTP && !selectedBooking.serviceOTPVerified && (
+              <div className="bg-gradient-to-r from-[#2F70E9] to-blue-600 p-6 rounded-[32px] shadow-xl shadow-blue-100 flex items-center justify-between mb-6 group overflow-hidden relative">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl group-hover:scale-150 transition-transform duration-500" />
+                <div className="relative z-10">
+                  <div className="flex items-center gap-2 text-white/70 mb-1">
+                    <ShieldCheck size={12} />
+                    <span className="text-[10px] font-black uppercase tracking-widest font-mono">Service OTP</span>
+                  </div>
+                  <p className="text-[11px] font-bold text-white/90 leading-tight">Share this with technician to start service</p>
+                </div>
+                <div className="relative z-10 bg-white/20 backdrop-blur-md px-5 py-3 rounded-2xl border border-white/30">
+                  <span className="text-2xl font-black text-white tracking-[0.2em] font-mono">{selectedBooking.serviceOTP}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Technician Info */}
+            {selectedBooking.technicianId && selectedBooking.technicianData && (
+              <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm mb-6">
+                <div className="flex items-center gap-4 mb-6">
+                  <img 
+                    src={selectedBooking.technicianData.photo || 'https://images.unsplash.com/photo-1633332755192-727a05c4013d?auto=format&fit=crop&q=80&w=200'} 
+                    alt="Tech" 
+                    className="w-16 h-16 rounded-2xl object-cover shadow-sm bg-gray-100"
+                  />
+                  <div className="flex-1">
+                    <p className="text-[9px] font-black text-[#2F70E9] uppercase tracking-widest mb-0.5">Assigned Technician</p>
+                    <h3 className="text-lg font-black text-gray-900">{selectedBooking.technicianData.name}</h3>
+                    <p className="text-[10px] font-bold text-gray-400">TurboTech Professional Specialist</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <a href={`tel:${selectedBooking.technicianData.phone}`} className="flex items-center justify-center gap-2 py-4 bg-gray-50 rounded-2xl text-[#2F70E9] font-black text-[12px] uppercase tracking-wider active:bg-gray-100 transition-colors">
+                    <PhoneCall size={16} /> Call
+                  </a>
+                  <a href={`https://wa.me/${selectedBooking.technicianData.phone.replace(/\D/g,'')}`} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2 py-4 bg-green-50 rounded-2xl text-green-600 font-black text-[12px] uppercase tracking-wider active:bg-green-100 transition-colors">
+                    <MessageSquare size={16} /> WhatsApp
+                  </a>
+                </div>
+              </div>
+            )}
+
             {/* Nav Cards */}
             <div className="grid grid-cols-2 gap-4 mb-4">
                <div className="bg-white p-5 rounded-[32px] border border-gray-50 shadow-sm overflow-hidden relative group">

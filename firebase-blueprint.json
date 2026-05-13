@@ -7,20 +7,13 @@
       "properties": {
         "phone": { "type": "string" },
         "role": { "type": "string", "enum": ["customer", "admin", "technician"] },
+        "points": { "type": "number" },
+        "lifetimePoints": { "type": "number" },
+        "badge": { "type": "string", "enum": ["Silver", "Gold", "Platinum"] },
+        "isBlocked": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["phone", "role"]
-    },
-    "OTP": {
-      "title": "OTP",
-      "description": "One-time passwords for authentication.",
-      "type": "object",
-      "properties": {
-        "phone": { "type": "string" },
-        "code": { "type": "string" },
-        "expiresAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["phone", "code", "expiresAt"]
     },
     "Booking": {
       "title": "Booking",
@@ -33,22 +26,35 @@
         "phone": { "type": "string" },
         "address": { "type": "string" },
         "problem": { "type": "string" },
-        "date": { "type": "string" },
-        "timeSlot": { "type": "string" },
         "type": { "type": "string", "enum": ["normal", "quick"] },
-        "status": { "type": "string", "enum": ["pending", "callback", "approved", "on_the_way", "completed", "rejected"] },
+        "status": { "type": "string" },
         "technicianId": { "type": "string" },
-        "location": {
-          "type": "object",
-          "properties": {
-            "lat": { "type": "number" },
-            "lng": { "type": "number" }
-          }
-        },
+        "technicianData": { "type": "object" },
+        "serviceOTP": { "type": "string" },
+        "serviceOTPVerified": { "type": "boolean" },
+        "deliveryOTP": { "type": "string" },
+        "deliveryOTPVerified": { "type": "boolean" },
+        "gift": { "type": "object" },
+        "rating": { "type": "object" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["customerId", "customerName", "phone", "address", "problem", "type", "status", "createdAt"]
+    },
+    "Offer": {
+      "title": "Offer",
+      "description": "Promotional offers.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "type": "string" },
+        "threshold": { "type": "number" },
+        "autoApply": { "type": "boolean" },
+        "enabled": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "type", "autoApply", "enabled"]
     },
     "Reward": {
       "title": "Reward",
@@ -57,17 +63,35 @@
       "properties": {
         "title": { "type": "string" },
         "description": { "type": "string" },
+        "pointsRequired": { "type": "number" },
         "imageUrl": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["title", "description"]
+      "required": ["title", "description", "pointsRequired"]
+    },
+    "RewardClaim": {
+      "title": "RewardClaim",
+      "description": "Claimed rewards tracking.",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string" },
+        "rewardId": { "type": "string" },
+        "status": { "type": "string" },
+        "pin": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerId", "rewardId", "status"]
     }
   },
   "firestore": {
-    "/users/{userId}": { "schema": "User", "description": "Customer profiles." },
-    "/otps/{phone}": { "schema": "OTP", "description": "Internal OTP storage." },
-    "/bookings/{bookingId}": { "schema": "Booking", "description": "Service requests." },
-    "/rewards/{rewardId}": { "schema": "Reward", "description": "Promotional rewards." },
-    "/admins/{userId}": { "schema": { "type": "object" }, "description": "Admin access list." }
+    "/users/{userId}": { "schema": "User", "description": "User profiles." },
+    "/otps/{phone}": { "schema": { "type": "object" }, "description": "Internal OTP storage." },
+    "/bookings/{bookingId}": { "schema": "Booking", "description": "Service requests / orders." },
+    "/offers/{offerId}": { "schema": "Offer", "description": "Promotional offers management." },
+    "/rewards/{rewardId}": { "schema": "Reward", "description": "Turbo Points rewards." },
+    "/reward_claims/{claimId}": { "schema": "RewardClaim", "description": "Customer reward tracking." },
+    "/admins/{userId}": { "schema": { "type": "object" }, "description": "Admin access list." },
+    "/web_stats/visits": { "schema": { "type": "object" }, "description": "Website visit tracking." }
   }
 }

@@ -5,7 +5,11 @@ export interface User {
   phone: string;
   name?: string;
   role: UserRole;
+  points?: number; // Turbo Points
+  lifetimePoints?: number;
+  badge?: 'Silver' | 'Gold' | 'Platinum';
   createdAt: string;
+  isBlocked?: boolean;
 }
 
 export type BookingStatus = 
@@ -23,6 +27,15 @@ export type BookingStatus =
   | 'completed' 
   | 'rejected' 
   | 'cancelled';
+
+export type GiftStatus = 
+  | 'pending'
+  | 'pin_verified'
+  | 'admin_approved'
+  | 'dispatched'
+  | 'out_for_delivery'
+  | 'delivered';
+
 export type BookingType = 'normal' | 'quick';
 
 export interface Booking {
@@ -37,6 +50,11 @@ export interface Booking {
   type: BookingType;
   status: BookingStatus;
   technicianId?: string;
+  technicianData?: {
+    name: string;
+    phone: string;
+    photo?: string;
+  };
   techLocation?: {
     lat: number;
     lng: number;
@@ -48,22 +66,63 @@ export interface Booking {
   };
   statusHistory?: {
     status: BookingStatus;
-    timestamp: string;
+    timestamp: string; // IST
   }[];
   eta?: string;
   distance?: number;
   total?: number;
   serviceCharge?: number;
   partsCost?: number;
-  housePhoto?: string;
+  serviceOTP?: string;
+  serviceOTPVerified?: boolean;
+  deliveryOTP?: string;
+  deliveryOTPVerified?: boolean;
+  productPhoto?: string;
+  gift?: {
+    title: string;
+    description: string;
+    status: GiftStatus;
+    pin?: string;
+    updatedAt: string; // IST
+  };
+  rating?: {
+    technician: number;
+    app: {
+      easeOfUse: number;
+      professionalism: number;
+      suggestions: string;
+    };
+  };
+  createdAt: string; // IST
+  updatedAt: string; // IST
+}
+
+export interface Offer {
+  id: string;
+  title: string;
+  description: string;
+  type: 'first_order' | 'threshold' | 'custom';
+  threshold?: number;
+  autoApply: boolean;
+  enabled: boolean;
   createdAt: string;
-  updatedAt: string;
 }
 
 export interface Reward {
   id: string;
   title: string;
   description: string;
+  pointsRequired: number;
   imageUrl?: string;
   createdAt: string;
+}
+
+export interface RewardClaim {
+  id: string;
+  customerId: string;
+  rewardId: string;
+  status: GiftStatus;
+  pin?: string;
+  createdAt: string;
+  updatedAt: string;
 }

@@ -48,8 +48,8 @@ export default function SuccessView() {
         <div className="absolute top-0 right-0 w-32 h-32 bg-[#2F70E9]/5 rounded-full -mr-16 -mt-16"></div>
         
         <div className="flex justify-center mb-8">
-          <div className="bg-[#2F70E9]/10 p-5 rounded-full border border-[#2F70E9]/10 relative z-10">
-            <CheckCircle size={56} className="text-[#2F70E9]" strokeWidth={2.5} />
+          <div className="bg-green-50 p-5 rounded-full border border-green-100 relative z-10">
+            <CheckCircle size={56} className="text-green-500" strokeWidth={2.5} />
           </div>
         </div>
 
