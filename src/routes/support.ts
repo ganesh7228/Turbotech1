@@ -4,8 +4,8 @@ import {
   handleSupportCallback,
   type SupportNodeId,
   type SupportResponse,
-} from "../lib/support/supportLogic";
-import { SupportSessionStore } from "../lib/support/supportSessionStore";
+} from "../lib/support/supportLogic.ts";
+import { SupportSessionStore } from "../lib/support/supportSessionStore.ts";
 
 type TelegramUpdate = any;
 
