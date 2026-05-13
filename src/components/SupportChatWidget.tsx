@@ -30,7 +30,8 @@ function getOrCreateUserId() {
 }
 
 function formatDots(count: number) {
-  return ".".repeat(count);
+  const safe = Math.max(0, Math.min(3, Math.floor(count)));
+  return ".".repeat(safe);
 }
 
 export default function SupportChatWidget() {
@@ -43,7 +44,12 @@ export default function SupportChatWidget() {
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const typingDots = useMemo(() => formatDots(((Date.now() / 500) | 0) % 4), [isTyping]);
+  const typingDots = useMemo(() => {
+    // Ensure non-negative count so String.repeat never receives -1
+    const t = Math.floor(Date.now() / 500);
+    const dots = ((t % 4) + 4) % 4;
+    return formatDots(dots);
+  }, [isTyping]);
 
   useEffect(() => {
     setUserId(getOrCreateUserId());
