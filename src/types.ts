@@ -6,6 +6,12 @@ export interface User {
   name?: string;
   role: UserRole;
   createdAt: string;
+
+  // Loyalty points for redeeming rewards
+  points?: number;
+
+  // Reward ids already redeemed by this user
+  redeemedRewardIds?: string[];
 }
 
 export type BookingStatus = 
@@ -72,4 +78,7 @@ export interface Reward {
   description: string;
   imageUrl?: string;
   createdAt: string;
+
+  // Points needed to redeem this reward
+  pointsRequired?: number;
 }

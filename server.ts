@@ -9,15 +9,40 @@ import { getFirestore, Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import jwt from "jsonwebtoken";
 import admin from "firebase-admin";
-import { supabaseAdmin } from "./src/lib/supabase-admin";
-
 import cookieParser from "cookie-parser";
+
+let supabaseAdmin: any;
+
+const loadSupabaseAdmin = async () => {
+  const candidates = [
+    // If server.ts is in /src (Render container), this is correct:
+    new URL("./lib/supabase-admin.ts", import.meta.url),
+    // If server.ts is in repo root locally, this is correct:
+    new URL("./src/lib/supabase-admin.ts", import.meta.url),
+  ];
+
+  for (const url of candidates) {
+    try {
+      const mod = await import(url.href);
+      if ('supabaseAdmin' in mod) return mod.supabaseAdmin;
+    } catch {
+      // keep trying
+    }
+  }
+
+  // Supabase is optional for this app to run (Firestore-only flows).
+  // If Supabase env vars are missing or the module can't be imported, start the server with null.
+  return null;
+};
+
+supabaseAdmin = await loadSupabaseAdmin();
 import cors from "cors";
 import fs from 'fs';
 
 dotenv.config();
 
-const serviceAccount = JSON.parse(process.env.FIREBASE_KEY as string);
+const FIREBASE_KEY_STR = process.env.FIREBASE_KEY;
+const serviceAccount = FIREBASE_KEY_STR ? JSON.parse(FIREBASE_KEY_STR) : null;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -44,27 +69,36 @@ if (projectId) {
 
 console.log("[FIREBASE] Expected Project:", projectId, "Expected Database:", databaseId);
 
-let adminApp: any;
+let adminApp: any = null;
 try {
-  if (getApps().length === 0) {
-    adminApp = admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount as any),
-      projectId: projectId || "gen-lang-client-0122634248"
-    });
+  if (serviceAccount && projectId) {
+    if (getApps().length === 0) {
+      adminApp = admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount as any),
+        projectId: projectId,
+      });
 
-    console.log("[FIREBASE] Admin App initialized with Service Account");
+      console.log("[FIREBASE] Admin App initialized with Service Account");
+    } else {
+      adminApp = getApps()[0];
+    }
   } else {
-    adminApp = getApps()[0];
+    console.warn("[FIREBASE] Missing FIREBASE_KEY and/or projectId; skipping Firebase Admin init.");
+    adminApp = getApps()[0] ?? null;
   }
 } catch (e) {
   console.error("[FIREBASE] Admin App initialization error:", e);
-  adminApp = getApps()[0];
+  adminApp = getApps()[0] ?? null;
 }
 
 let db: any;
 let signBlobAvailable = true;
 
 const initFirestore = async () => {
+  if (!adminApp) {
+    console.warn("[FIREBASE] adminApp is null; skipping Firestore init.");
+    return;
+  }
   const dbName = databaseId && databaseId !== "(default)" ? databaseId : undefined;
   
   try {
@@ -103,11 +137,10 @@ const initFirestore = async () => {
   }
 };
 
-// Initialize Firestore asynchronously
 initFirestore();
 
 
-const authAdmin = getAuth(adminApp);
+const authAdmin = adminApp ? getAuth(adminApp) : null;
 const JWT_SECRET = process.env.JWT_SECRET || "nanjangud-service-pro-secret-123";
 
 const app = express();
@@ -282,6 +315,8 @@ app.post("/api/verify-otp", async (req, res) => {
           phone,
           role: phone === ADMIN_NUMBER ? "admin" : "customer",
           createdAt: new Date().toISOString(),
+          points: 0,
+          redeemedRewardIds: [],
         };
         const resDoc = await db.collection("users").add(newUser);
         userData = { id: resDoc.id, ...newUser };
@@ -312,12 +347,17 @@ app.post("/api/verify-otp", async (req, res) => {
     let firebaseToken = "";
     if (signBlobAvailable) {
       try {
-        // Add custom claims for easier rule checks
-        firebaseToken = await authAdmin.createCustomToken(userData.id, { 
-          phone: phone,
-          role: userData.role 
-        });
-        console.log(`[AUTH] Custom token created for ${phone}`);
+        if (!authAdmin) {
+          // No Firebase Admin auth configured (e.g. missing FIREBASE_KEY)
+          console.warn("[AUTH] authAdmin is null; skipping firebaseToken creation");
+        } else {
+          // Add custom claims for easier rule checks
+          firebaseToken = await authAdmin.createCustomToken(userData.id, { 
+            phone: phone,
+            role: userData.role 
+          });
+          console.log(`[AUTH] Custom token created for ${phone}`);
+        }
       } catch (err: any) {
         if (err.message && err.message.includes('signBlob')) {
           console.warn("[AUTH] signBlob permission missing, disabling custom tokens for this session");
@@ -389,10 +429,15 @@ app.get("/api/me", async (req, res) => {
     let firebaseToken = "";
     if (signBlobAvailable) {
       try {
-        firebaseToken = await authAdmin.createCustomToken(decoded.id, {
+        if (!authAdmin) {
+          res.status(503).json({ error: "Firebase admin auth not configured on server" });
+          return;
+        }
+        firebaseToken = await authAdmin?.createCustomToken(decoded.id, {
           phone: decoded.phone,
           role: decoded.role
         });
+        if (!firebaseToken) return;
       } catch (err: any) {
         if (err.message && err.message.includes('signBlob')) {
           signBlobAvailable = false;
