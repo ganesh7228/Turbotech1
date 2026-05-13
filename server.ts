@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import axios from "axios";
 import dotenv from "dotenv";
 import cron from "node-cron";
-import { runFirestoreBackup } from "./src/lib/backup/firestoreBackup";
+import { runFirestoreBackup } from "./src/lib/backup/firestoreBackup.ts";
 import { getApps } from "firebase-admin/app";
 import { getFirestore, Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
